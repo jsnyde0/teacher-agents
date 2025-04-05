@@ -18,7 +18,7 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-TEST_MODEL_NAME = "google/gemini-flash-1.5"
+TEST_MODEL_NAME = "google/gemini-2.0-flash-lite-001"
 
 # --- Test Setup (Model Configuration) ---
 openrouter_model = OpenAIModel(
