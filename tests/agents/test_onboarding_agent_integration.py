@@ -55,7 +55,7 @@ async def test_onboarding_agent_conversational_flow():
     history: List[ModelMessage] = []
 
     # --- Turn 1: User gives partial info (Goal only) ---
-    prompt1 = "Hi, I want to learn FastAPI."
+    prompt1 = "Hi, my learning goal is to learn FastAPI."
     print(f"\nUser Turn 1: {prompt1}")
     result1 = await agent.run(prompt1, message_history=history)
     history.extend(result1.all_messages())
