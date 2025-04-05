@@ -1,0 +1,125 @@
+---
+description:
+globs: "**/*.py",*.py
+alwaysApply: false
+---
+# Python Documentation Guide
+
+Rule for Python documentation best practices.
+
+<rule>
+name: python_documentation_guide
+filters:
+  - type: file_extension
+    pattern: "\\.py$"
+  - type: event
+    pattern: "file_save"
+  - type: event
+    pattern: "file_create"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: ".*\\.py$"
+    action: |
+      # Validate Python documentation
+
+      I'll analyze Python documentation for completeness:
+
+      1. Docstring Format:
+         - Use Google-style docstrings
+         - Include Args, Returns, Raises sections
+         - Document types (in addition to type hints)
+         - Add examples for complex functions
+         - Keep docstrings concise but complete
+
+      2. Module Documentation:
+         - Module-level docstring explaining purpose
+         - List key classes/functions
+         - Include usage examples
+         - Note any dependencies
+         - Document any side effects
+
+      3. Class Documentation:
+         - Class purpose and behavior
+         - Document public attributes
+         - Constructor parameters
+         - Base classes and interfaces
+         - Usage examples
+
+      4. Function Documentation:
+         - Clear description of behavior
+         - All parameters documented
+         - Return value documented
+         - Exceptions documented
+         - Performance notes if relevant
+
+      5. Comments:
+         - Explain why, not what
+         - Keep current with code
+         - Mark TODOs with owner
+         - Document complex algorithms
+         - Explain non-obvious decisions
+
+  - type: suggest
+    message: |
+      ### Python Documentation Guide
+
+      Follow these documentation standards:
+
+      **Docstrings:**
+      - Use Google style
+      - Document args/returns/raises
+      - Include types
+      - Add examples
+
+      **Module Docs:**
+      - Purpose
+      - Key components
+      - Dependencies
+      - Examples
+
+      **Class Docs:**
+      - Purpose
+      - Attributes
+      - Constructor
+      - Usage
+
+      **Function Docs:**
+      - Behavior
+      - Parameters
+      - Returns
+      - Exceptions
+
+      **Comments:**
+      - Explain why
+      - Keep updated
+      - Mark TODOs
+
+examples:
+  - input: |
+      # Bad documentation
+      def process(x):
+          """Process x."""
+          return x * 2
+
+      # Good documentation
+      def process(x: float) -> float:
+          """Double the input value.
+
+          Args:
+              x: The number to double
+
+          Returns:
+              The input multiplied by 2
+
+          Raises:
+              TypeError: If x is not a number
+          """
+          return x * 2
+    output: "Documentation improved for clarity and completeness"
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

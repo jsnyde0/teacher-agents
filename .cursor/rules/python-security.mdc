@@ -1,0 +1,111 @@
+---
+description:
+globs: "**/*.py",*.py
+alwaysApply: false
+---
+# Python Security Guide
+
+Rule for Python security best practices.
+
+<rule>
+name: python_security_guide
+filters:
+  - type: file_extension
+    pattern: "\\.py$"
+  - type: event
+    pattern: "file_save"
+  - type: event
+    pattern: "security_check"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: ".*\\.py$"
+    action: |
+      # Analyze Python code for security considerations
+
+      I'll check for security best practices:
+
+      1. Input Validation:
+         - Validate all user input
+         - Use type checking
+         - Sanitize data before processing
+         - Validate file paths
+         - Check array bounds
+
+      2. Data Protection:
+         - Use secure password hashing
+         - Encrypt sensitive data
+         - Don't log sensitive information
+         - Use secure random numbers
+         - Protect API keys
+
+      3. File Operations:
+         - Use safe file operations
+         - Validate file paths
+         - Check file permissions
+         - Use temporary files safely
+         - Clean up sensitive files
+
+      4. Database Security:
+         - Use parameterized queries
+         - Escape special characters
+         - Limit database permissions
+         - Use connection pooling
+         - Validate queries
+
+      5. Network Security:
+         - Use HTTPS/TLS
+         - Validate certificates
+         - Set appropriate timeouts
+         - Handle errors securely
+         - Use secure defaults
+
+  - type: suggest
+    message: |
+      ### Python Security Guide
+
+      Follow these security guidelines:
+
+      **Input Validation:**
+      - Validate all input
+      - Check types
+      - Sanitize data
+      - Validate paths
+
+      **Data Protection:**
+      - Hash passwords
+      - Encrypt sensitive data
+      - Secure logging
+      - Protect secrets
+
+      **File Safety:**
+      - Safe operations
+      - Check permissions
+      - Clean up files
+
+      **Database:**
+      - Use parameters
+      - Escape data
+      - Limit access
+
+      **Network:**
+      - Use HTTPS
+      - Verify certs
+      - Set timeouts
+      - Handle errors
+
+examples:
+  - input: |
+      # Insecure code
+      query = f"SELECT * FROM users WHERE id = {user_id}"
+
+      # Secure code
+      query = "SELECT * FROM users WHERE id = %s"
+      cursor.execute(query, (user_id,))
+    output: "Code secured against SQL injection"
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

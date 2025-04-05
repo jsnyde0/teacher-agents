@@ -1,0 +1,9 @@
+{
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.ruff": "explicit"
+    },
+    "ruff.organizeImports": true,
+    "ruff.lint.fixOnSave": true
+}

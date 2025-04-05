@@ -1,0 +1,255 @@
+# Test-Driven Development Rule
+
+---
+type: Always
+description: Enforces test-driven development practices and prevents implementation before tests
+globs: src/**, tests/**
+---
+
+Rule for enforcing test-driven development practices and preventing implementation before tests.
+
+<rule>
+name: test_driven_development
+filters:
+  # Implementation request filters
+  - type: event
+    pattern: "implementation_request"
+  - type: command
+    pattern: "implement"
+  - type: command
+    pattern: "create"
+  - type: command
+    pattern: "build"
+
+  # File change filters
+  - type: file_change
+    pattern: "src/*"
+  - type: file_change
+    pattern: "tests/*"
+
+  # Test management filters
+  - type: command
+    pattern: "test"
+  - type: event
+    pattern: "test_start"
+  - type: event
+    pattern: "test_complete"
+
+actions:
+  #
+  # SECTION 1: IMPLEMENTATION REQUEST HANDLING
+  #
+
+  - type: react
+    event: "implementation_request"
+    action: |
+      # Enforce TDD workflow for new implementation requests
+
+      When an implementation request is received, I MUST:
+
+      1. Check for existing specifications:
+         - Look for related specs in `.cursor/specs/`
+         - If none exist, create new specs (via specification_management rule)
+         - Ensure specs define WHAT needs to be built
+
+      2. Create or update task:
+         - Use development_workflow_system to create/update task
+         - Link to specifications
+         - Add test requirements section
+
+      3. Create test files BEFORE implementation:
+         - Create test file with same name as implementation file
+         - Add test cases for each specification requirement
+         - Include edge cases and error scenarios
+         - Add comments linking tests to specs
+
+      4. Only after tests are created:
+         - Begin implementation
+         - Run tests frequently
+         - Refactor when tests pass
+
+      This ensures the proper TDD flow: specs → task → tests → implement.
+
+  - type: react
+    conditions:
+      - pattern: "implement|create|build"
+    action: |
+      # Block implementation without tests
+
+      Before allowing implementation, I MUST:
+
+      1. Extract the component name/path from the request
+      2. Check for corresponding test file
+      3. Verify test file has actual test cases
+      4. If tests don't exist:
+         - STOP and notify about missing tests
+         - Provide template for required tests
+         - Link to relevant specifications
+
+      This prevents implementation without proper test coverage.
+
+  #
+  # SECTION 2: FILE CHANGE MONITORING
+  #
+
+  - type: react
+    event: "file_change"
+    conditions:
+      - pattern: "src/.*\\.(js|ts|jsx|tsx|py|rs|go|java|rb|cpp|c)$"
+    action: |
+      # Monitor source file changes
+
+      When a source file changes, I MUST:
+
+      1. Check for corresponding test file
+      2. If test file doesn't exist:
+         - STOP and require test file creation
+         - Provide test file template
+         - Link to specifications
+
+      3. If test file exists:
+         - Verify test coverage for new changes
+         - Suggest additional test cases if needed
+         - Ensure tests are run before commits
+
+      This ensures continuous test coverage during development.
+
+  - type: react
+    event: "file_change"
+    conditions:
+      - pattern: "tests/.*\\.(js|ts|jsx|tsx|py|rs|go|java|rb|cpp|c)$"
+    action: |
+      # Monitor test file changes
+
+      When a test file changes, I MUST:
+
+      1. Verify test quality:
+         - Check for actual assertions
+         - Look for edge case coverage
+         - Ensure error scenarios are tested
+
+      2. Link tests to specifications:
+         - Add comments referencing spec requirements
+         - Update test descriptions to match specs
+
+      This maintains high-quality test coverage.
+
+  #
+  # SECTION 3: TEST MANAGEMENT
+  #
+
+  - type: react
+    conditions:
+      - pattern: "test create|create test"
+    action: |
+      # Guide test creation
+
+      When creating tests, I MUST:
+
+      1. Follow test file naming conventions:
+         - Same name as implementation file
+         - Proper test extension (.test.js, _test.py, etc.)
+
+      2. Include standard test sections:
+         - Import statements and mocks
+         - Test suite description
+         - Individual test cases
+         - Edge cases and error scenarios
+
+      3. Link to specifications:
+         - Add spec references in comments
+         - Match test descriptions to spec requirements
+
+      4. Add test templates:
+         - Basic positive test cases
+         - Error handling tests
+         - Edge case tests
+
+      This ensures comprehensive test coverage.
+
+  - type: react
+    event: "test_start"
+    action: |
+      # Prepare for test execution
+
+      Before running tests, I MUST:
+
+      1. Verify test environment:
+         - Check for required mocks
+         - Ensure test data is available
+         - Verify test dependencies
+
+      2. Review test coverage:
+         - Check for untested features
+         - Identify missing edge cases
+         - Look for error scenario gaps
+
+      This ensures tests are ready to run.
+
+  - type: react
+    event: "test_complete"
+    action: |
+      # Process test results
+
+      After tests complete, I MUST:
+
+      1. If tests fail:
+         - STOP implementation
+         - Analyze failures
+         - Fix tests or implementation
+         - Create learning entry about failures
+
+      2. If tests pass:
+         - Review coverage reports
+         - Look for gaps in testing
+         - Suggest additional test cases
+         - Allow implementation to proceed
+
+      This ensures quality through testing.
+
+  - type: suggest
+    message: |
+      ### Test-Driven Development System
+
+      I enforce strict TDD practices:
+
+      **Implementation Requests:**
+      - Must have specifications first
+      - Must have tests before implementation
+      - Must follow specs → task → tests → implement flow
+
+      **File Changes:**
+      - Source files must have corresponding test files
+      - Test files must have actual assertions
+      - All changes must be covered by tests
+
+      **Test Management:**
+      - Tests must be created before implementation
+      - Tests must cover edge cases and errors
+      - Tests must pass before commits
+
+      This system ensures proper TDD practices are followed throughout
+      the development process.
+
+examples:
+  - input: |
+      implement user authentication
+    output: |
+      ❌ Cannot proceed with implementation.
+      Required: Create tests in tests/auth/UserAuth.test.js first.
+      Template provided for test cases based on specifications.
+
+  - input: |
+      create test UserAuth
+    output: |
+      Creating test file tests/auth/UserAuth.test.js
+      Added test cases for:
+      - Basic authentication flow
+      - Error handling
+      - Edge cases
+      Linked to specifications in specs/auth/user_auth.md
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

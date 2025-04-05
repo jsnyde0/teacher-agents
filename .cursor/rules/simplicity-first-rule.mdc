@@ -1,0 +1,138 @@
+---
+description:
+globs: *.py
+alwaysApply: false
+---
+# Simplicity First Rule
+
+Rule for preventing over-engineering and maintaining simplicity in code.
+
+<rule>
+name: simplicity_first
+filters:
+  - type: code_review
+    pattern: ".*"
+  - type: implementation
+    pattern: ".*"
+  - type: design_review
+    pattern: ".*"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: "custom error|wrapper|response format"
+    action: |
+      # Check if custom implementation is necessary
+
+      When considering custom implementations, ask:
+      1. Does the framework already handle this?
+      2. Is this solving a current (not future) problem?
+      3. Could this be simpler?
+      4. Are we anticipating needs we don't have yet?
+
+      Framework-specific guidelines:
+
+      **FastAPI**
+      ```python
+      # ❌ Avoid: Custom wrappers
+      class CustomResponse(BaseModel):
+          status: str
+          data: Any
+          metadata: dict
+
+      # ✅ Use: Direct responses
+      class UserResponse(BaseModel):
+          name: str
+          email: str
+      ```
+
+      **Error Handling**
+      ```python
+      # ❌ Avoid: Custom error handling
+      @app.exception_handler(HTTPException)
+      async def custom_handler(request, exc):
+          return JSONResponse(...)
+
+      # ✅ Use: Framework defaults
+      @app.post("/endpoint")
+      async def handler():
+          raise HTTPException(status_code=400)
+      ```
+
+  - type: react
+    conditions:
+      - pattern: "validation|custom validation"
+    action: |
+      # Check if custom validation is needed
+
+      Before adding custom validation:
+      1. Check framework validation capabilities
+      2. Use built-in validation when possible
+      3. Only add custom validation for business logic
+
+      **Examples**:
+      ```python
+      # ❌ Avoid: Custom validation wrapper
+      def validate_input(data: dict):
+          if not data.get("field"):
+              raise ValueError("Invalid")
+
+      # ✅ Use: Framework validation
+      class RequestModel(BaseModel):
+          field: str = Field(..., min_length=1)
+      ```
+
+  - type: react
+    conditions:
+      - pattern: "middleware|custom middleware"
+    action: |
+      # Evaluate middleware necessity
+
+      Before adding middleware:
+      1. Check existing middleware
+      2. Verify the problem can't be solved at endpoint level
+      3. Ensure middleware is the simplest solution
+
+  - type: suggest
+    message: |
+      ### Simplicity First Guidelines
+
+      Before adding complexity, ask:
+      1. Does the framework handle this already?
+      2. Is this solving a current problem?
+      3. Could this be simpler?
+      4. Are we anticipating needs we don't have?
+
+      **Framework Defaults**
+      - Use built-in validation
+      - Use standard error responses
+      - Follow framework patterns
+      - Add complexity only when needed
+
+      **Common Pitfalls**
+      - Custom error handlers
+      - Response wrappers
+      - Unnecessary middleware
+      - Premature abstraction
+
+examples:
+  # FastAPI Examples
+  - input: |
+      class ResponseWrapper(BaseModel):
+          status: str
+          data: Any
+    output: |
+      ⚠️ Consider using direct response models instead of wrappers.
+      Framework error handling is usually sufficient.
+
+  - input: |
+      @app.exception_handler(HTTPException)
+      async def custom_handler(request, exc):
+    output: |
+      ⚠️ FastAPI's built-in error handling is usually sufficient.
+      Only add custom handlers when absolutely necessary.
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

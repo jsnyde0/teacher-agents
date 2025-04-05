@@ -1,0 +1,110 @@
+---
+description:
+globs: *.py
+alwaysApply: false
+---
+---
+description: Python code style and best practices
+globs: "**/*.py"
+alwaysApply: true
+---
+# Python Style Guide
+
+Rule for enforcing Python code style best practices.
+
+<rule>
+name: python_style_guide
+filters:
+  - type: file_extension
+    pattern: "\\.py$"
+  - type: event
+    pattern: "file_save"
+  - type: event
+    pattern: "file_create"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: ".*\\.py$"
+    action: |
+      # Validate Python code style
+
+      I'll analyze Python code for style compliance:
+
+      1. PEP 8 Compliance:
+         - Use 4 spaces for indentation
+         - Maximum line length of 79 characters (code) or 72 (docstrings/comments)
+         - Two blank lines before top-level classes/functions
+         - One blank line before class methods
+         - No trailing whitespace
+         - Use spaces around operators and after commas
+
+      2. Naming Conventions:
+         - Class names: CapWords (PascalCase)
+         - Function/method names: lowercase_with_underscores
+         - Constants: UPPERCASE_WITH_UNDERSCORES
+         - Private attributes/methods: _single_leading_underscore
+         - "Private" class attributes: __double_leading_underscore
+         - Variables: lowercase_with_underscores
+
+      3. Import Style:
+         - Imports on separate lines
+         - Order: standard library, third-party, local application
+         - No wildcard imports (from module import *)
+         - Absolute imports preferred over relative
+
+      4. Code Organization:
+         - One class per file (when practical)
+         - Related classes in same module
+         - Clear logical separation of concerns
+         - Avoid circular imports
+
+      5. Language Features:
+         - Use list/dict/set comprehensions when clear
+         - Prefer f-strings over .format() or %
+         - Use context managers (with) for resource management
+         - Explicit is better than implicit
+         - Use type hints for function signatures
+
+  - type: suggest
+    message: |
+      ### Python Style Guide
+
+      Follow these style guidelines for Python code:
+
+      **Formatting:**
+      - 4 spaces for indentation
+      - 79 char line length (72 for docstrings)
+      - Use spaces around operators
+
+      **Naming:**
+      - Classes: PascalCase
+      - Functions/variables: snake_case
+      - Constants: UPPER_SNAKE_CASE
+
+      **Imports:**
+      - One import per line
+      - Standard lib → third-party → local
+      - No wildcard imports
+
+      **Best Practices:**
+      - Use type hints
+      - Prefer f-strings
+      - Use context managers
+      - Write clear, explicit code
+
+examples:
+  - input: |
+      # Bad style
+      def DoThing( x,y ):
+          return x+y
+
+      # Good style
+      def do_thing(x: int, y: int) -> int:
+          return x + y
+    output: "Style corrected to follow Python conventions"
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

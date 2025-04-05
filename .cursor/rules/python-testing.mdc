@@ -1,0 +1,117 @@
+---
+description:
+globs: tests/*/*.py,tests/*.py
+alwaysApply: false
+---
+ ---
+description: Python testing best practices and patterns
+globs: "**/*.py"
+alwaysApply: true
+---
+# Python Testing Guide
+
+Rule for Python testing best practices.
+
+<rule>
+name: python_testing_guide
+filters:
+  - type: file_extension
+    pattern: "test_.*\\.py$"
+  - type: file_extension
+    pattern: ".*_test\\.py$"
+  - type: event
+    pattern: "test_create"
+  - type: event
+    pattern: "test_run"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: "test_.*\\.py$|.*_test\\.py$"
+    action: |
+      # Validate Python test structure and patterns
+
+      I'll analyze Python test files for best practices:
+
+      1. Test Structure:
+         - Use pytest as testing framework
+         - One test file per module
+         - Clear test function names (test_feature_scenario)
+         - Group related tests in classes (Test{Feature})
+         - Use fixtures for test setup/teardown
+
+      2. Test Coverage:
+         - Test both success and error paths
+         - Test edge cases and boundaries
+         - Test all public interfaces
+         - Aim for 80%+ coverage
+         - Use parametrized tests for multiple cases
+
+      3. Test Quality:
+         - Each test checks one specific thing
+         - Use descriptive assertion messages
+         - Avoid test interdependence
+         - Mock external dependencies
+         - Use appropriate assertions (not just assert)
+
+      4. Test Organization:
+         - Place tests in tests/ directory
+         - Mirror source directory structure
+         - Use conftest.py for shared fixtures
+         - Separate unit and integration tests
+
+      5. Test Performance:
+         - Keep tests fast (< 1s per test)
+         - Use setup_class for expensive operations
+         - Clean up test resources
+         - Mark slow tests with @pytest.mark.slow
+
+  - type: suggest
+    message: |
+      ### Python Testing Guide
+
+      Follow these testing best practices:
+
+      **Structure:**
+      - Use pytest
+      - One test file per module
+      - Clear test names
+      - Use fixtures
+
+      **Coverage:**
+      - Test success & error paths
+      - Test edge cases
+      - 80%+ coverage goal
+
+      **Quality:**
+      - One assertion per test
+      - Independent tests
+      - Mock externals
+      - Clear assertions
+
+      **Organization:**
+      - tests/ directory
+      - Mirror source structure
+      - Use conftest.py
+
+      **Performance:**
+      - Fast tests
+      - Clean resources
+      - Mark slow tests
+
+examples:
+  - input: |
+      # Bad test
+      def test_something():
+          assert do_thing()
+
+      # Good test
+      def test_calculation_with_positive_numbers():
+          result = calculate(5, 10)
+          assert result == 15, "Expected 5 + 10 to equal 15"
+    output: "Test structure improved for clarity and reliability"
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

@@ -1,0 +1,59 @@
+---
+description: Rule to manage dependencies
+globs:
+alwaysApply: false
+---
+ # UV Package Management System
+
+Rule for managing project dependencies using UV package manager.
+
+<rule>
+name: uv_package_management
+filters:
+  - type: command
+    pattern: "uv"
+  - type: file_change
+    pattern: "pyproject.toml"
+
+actions:
+  - type: suggest
+    message: |
+      ### UV Package Management Commands
+
+      Use these commands to manage dependencies:
+
+      **Adding Dependencies:**
+      - `uv add package-name` - Add regular dependency
+      - `uv add --dev package-name` - Add development dependency
+
+      **Removing Dependencies:**
+      - `uv pip uninstall package-name` - Remove a package
+
+      **Updating Dependencies:**
+      - `uv pip install -U package-name` - Update specific package
+      - `uv pip install -U --all-extras --dev` - Update all packages
+
+      **Other Commands:**
+      - `uv sync --all-extras --dev` - Sync environment with pyproject.toml
+      - `uv pip list` - List installed packages
+
+      Always use UV commands instead of manually editing pyproject.toml
+      to ensure proper dependency resolution and installation.
+
+examples:
+  - input: |
+      uv add pytest-mock
+    output: |
+      Adding pytest-mock...
+      Successfully added pytest-mock to pyproject.toml
+
+  - input: |
+      uv add --dev black
+    output: |
+      Adding black as dev dependency...
+      Successfully added black to pyproject.toml
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>

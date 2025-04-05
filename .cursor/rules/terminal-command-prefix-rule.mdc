@@ -1,0 +1,52 @@
+---
+description: Apply this rule whenever running any terminal or shell or bash commands
+globs:
+alwaysApply: false
+---
+---
+description: Apply this rule whenever running any terminal or shell or bash commands
+globs:
+alwaysApply: false
+---
+# Rule: Enforce Consistent Command Practices
+
+# This rule ensures terminal commands executed via the AI follow consistent practices
+# to prevent errors and maintain best practices across the project.
+
+<rule>
+name: enforce_terminal_practices
+filters:
+  # Filter for when the run_terminal_cmd tool is about to be used.
+  - type: tool_call
+    pattern: "run_terminal_cmd"
+
+actions:
+  # React by providing instructions to the AI Assistant (me).
+  - type: react
+    action: |
+      # 1. Prepend cd to project root before executing terminal command
+
+      **RULE TRIGGERED: enforce_terminal_practices**
+
+      Before executing the proposed terminal command, I MUST ensure it is prefixed with:
+      `cd /home/jsnyde0/Documents/code/humble-clay/ && `
+
+      **Reason:** To guarantee command execution within the intended directory and ensure reliable path resolution, preventing errors observed previously.
+
+      # 2. Use UV for Python-related commands
+
+      For Python commands, I MUST follow these practices:
+
+      - Use `uv run pytest` instead of `python -m pytest` or direct `pytest` calls
+      - Use `uv run python` instead of directly calling `python`
+      - Use `uv pip install` instead of `pip install`
+
+      **Reason:** UV provides better performance, dependency resolution, and consistent environment management.
+
+      I will now modify the proposed command to include these requirements.
+
+metadata:
+  # Critical priority to ensure it's checked before every relevant command.
+  priority: critical
+  version: 1.0
+</rule>

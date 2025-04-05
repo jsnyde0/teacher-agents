@@ -1,0 +1,115 @@
+---
+description:
+globs: "**/*.py",*.py
+alwaysApply: false
+---
+# Python Performance Guide
+
+Rule for Python performance best practices.
+
+<rule>
+name: python_performance_guide
+filters:
+  - type: file_extension
+    pattern: "\\.py$"
+  - type: event
+    pattern: "file_save"
+  - type: event
+    pattern: "performance_check"
+
+actions:
+  - type: react
+    conditions:
+      - pattern: ".*\\.py$"
+    action: |
+      # Analyze Python code for performance considerations
+
+      I'll check for performance best practices:
+
+      1. Data Structures:
+         - Use appropriate collections (list, set, dict)
+         - Consider numpy for numerical operations
+         - Use generators for large sequences
+         - Avoid copying large objects
+         - Use slots for memory optimization
+
+      2. Loops and Comprehensions:
+         - Use list/dict/set comprehensions
+         - Avoid nested loops when possible
+         - Move invariant code outside loops
+         - Use itertools for efficient iteration
+         - Consider numpy vectorization
+
+      3. Memory Management:
+         - Close file handles properly
+         - Use context managers
+         - Clear large objects when done
+         - Watch for memory leaks
+         - Profile memory usage
+
+      4. I/O Operations:
+         - Use buffered I/O
+         - Batch database operations
+         - Cache expensive operations
+         - Use async I/O when appropriate
+         - Stream large files
+
+      5. General Optimization:
+         - Profile before optimizing
+         - Use built-in functions
+         - Consider Cython for hotspots
+         - Use multiprocessing when appropriate
+         - Optimize inner loops first
+
+  - type: suggest
+    message: |
+      ### Python Performance Guide
+
+      Follow these performance guidelines:
+
+      **Data Structures:**
+      - Choose appropriate types
+      - Use numpy for math
+      - Use generators
+      - Optimize memory
+
+      **Loops:**
+      - Use comprehensions
+      - Avoid nesting
+      - Move invariants out
+      - Use itertools
+
+      **Memory:**
+      - Manage resources
+      - Use context managers
+      - Profile usage
+
+      **I/O:**
+      - Buffer operations
+      - Batch DB calls
+      - Use caching
+      - Stream large files
+
+      **Optimization:**
+      - Profile first
+      - Use built-ins
+      - Consider Cython
+      - Parallelize
+
+examples:
+  - input: |
+      # Poor performance
+      result = []
+      for i in range(1000000):
+          result.append(i * 2)
+
+      # Better performance
+      result = [i * 2 for i in range(1000000)]
+      # or
+      result = numpy.arange(1000000) * 2
+    output: "Code optimized for better performance"
+
+metadata:
+  priority: high
+  version: 1.0
+</rule>
