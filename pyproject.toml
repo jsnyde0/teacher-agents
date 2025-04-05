@@ -25,11 +25,12 @@ target-version = "py312"
 # Essential rules for your current codebase
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
+    "E",   # pycodestyle errors (but E501 will be ignored below)
     "F",   # pyflakes
     "I",   # isort
     "B",   # bugbear
 ]
+ignore = ["E501"] # Ignore line length errors
 
 # Directories to ignore
 exclude = [
