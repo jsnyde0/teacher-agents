@@ -263,77 +263,96 @@ async def on_message(message: cl.Message):
             return
 
         await cl.Message(content="Processing your information...").send()  # Feedback
-        result = await onboarding_agent.run(
-            message.content, message_history=message_history
-        )
-        # Use the message_history list fetched at the start
-        message_history.extend(result.all_messages())
 
-        if isinstance(result.data, OnboardingData):
-            logger.info("Onboarding complete. Moving to pedagogy stage.")
-            onboarding_data = result.data
-            cl.user_session.set("onboarding_data", onboarding_data)
-            cl.user_session.set("current_stage", "pedagogy")
-            await cl.Message(
-                content=(
-                    "Thanks! I have your onboarding details. Now generating personalized pedagogical guidelines..."
-                )
-            ).send()
-            # --- Trigger PMA ---
-            guidelines_result = await run_pedagogical_master(onboarding_data)
-            if isinstance(guidelines_result, PedagogicalGuidelines):
-                logger.info("PMA successful. Moving to journey crafting stage.")
-                cl.user_session.set("pedagogical_guidelines", guidelines_result)
-                cl.user_session.set("current_stage", "journey_crafting")
+        # --> Add try/except around agent run <---
+        try:
+            result = await onboarding_agent.run(
+                message.content, message_history=message_history
+            )
+            # Use the message_history list fetched at the start
+            message_history.extend(result.all_messages())
+
+            # --> Log the type of result.data <---
+            logger.info(f"Onboarding agent returned type: {type(result.data)}")
+
+            if isinstance(result.data, OnboardingData):
+                logger.info("Onboarding complete. Moving to pedagogy stage.")
+                onboarding_data = result.data
+                cl.user_session.set("onboarding_data", onboarding_data)
+                cl.user_session.set("current_stage", "pedagogy")
                 await cl.Message(
-                    content=("Guidelines created! Now crafting your learning plan...")
+                    content=(
+                        "Thanks! I have your onboarding details. Now generating personalized pedagogical guidelines..."
+                    )
                 ).send()
-                # --- Trigger JCA ---
-                plan_result = await run_journey_crafter(
-                    onboarding_data, guidelines_result
-                )
-                if isinstance(plan_result, LearningPlan):
-                    logger.info("JCA successful. Moving to teaching stage.")
-                    cl.user_session.set("learning_plan", plan_result.steps)
-                    cl.user_session.set("current_step_index", 0)
-                    cl.user_session.set("current_stage", "teaching")
+                # --- Trigger PMA ---
+                guidelines_result = await run_pedagogical_master(onboarding_data)
+                if isinstance(guidelines_result, PedagogicalGuidelines):
+                    logger.info("PMA successful. Moving to journey crafting stage.")
+                    cl.user_session.set("pedagogical_guidelines", guidelines_result)
+                    cl.user_session.set("current_stage", "journey_crafting")
                     await cl.Message(
                         content=(
-                            "Here is your learning plan:\\n"
-                            + "\\n".join([f"- {s}" for s in plan_result.steps])
-                            + "\\n\\nLet's start with the first step!"
+                            "Guidelines created! Now crafting your learning plan..."
                         )
                     ).send()
-                    # --- Trigger Teacher for Step 0 ---
-                    teaching_message = await run_teacher_for_current_step()
-                    await cl.Message(content=teaching_message).send()
-                else:  # JCA Error
-                    logger.error(f"JCA failed: {plan_result}")
+                    # --- Trigger JCA ---
+                    plan_result = await run_journey_crafter(
+                        onboarding_data, guidelines_result
+                    )
+                    if isinstance(plan_result, LearningPlan):
+                        logger.info("JCA successful. Moving to teaching stage.")
+                        cl.user_session.set("learning_plan", plan_result.steps)
+                        cl.user_session.set("current_step_index", 0)
+                        cl.user_session.set("current_stage", "teaching")
+                        await cl.Message(
+                            content=(
+                                "Here is your learning plan:\\n"
+                                + "\\n".join([f"- {s}" for s in plan_result.steps])
+                                + "\\n\\nLet's start with the first step!"
+                            )
+                        ).send()
+                        # --- Trigger Teacher for Step 0 ---
+                        teaching_message = await run_teacher_for_current_step()
+                        await cl.Message(content=teaching_message).send()
+                    else:  # JCA Error
+                        logger.error(f"JCA failed: {plan_result}")
+                        await cl.Message(
+                            content=f"Sorry, I couldn't create your learning plan: {plan_result}"
+                        ).send()
+                        cl.user_session.set(
+                            "current_stage", "complete"
+                        )  # End flow on error
+                else:  # PMA Error
+                    logger.error(f"PMA failed: {guidelines_result}")
                     await cl.Message(
-                        content=f"Sorry, I couldn't create your learning plan: {plan_result}"
+                        content=f"Sorry, I couldn't generate pedagogical guidelines: {guidelines_result}"
                     ).send()
                     cl.user_session.set(
                         "current_stage", "complete"
                     )  # End flow on error
-            else:  # PMA Error
-                logger.error(f"PMA failed: {guidelines_result}")
+            elif isinstance(result.data, str):
+                # Onboarding agent asking for more info
+                logger.info("Onboarding agent needs more info.")
+                await cl.Message(content=result.data).send()
+            else:
+                # Handle unexpected onboarding result type
+                logger.error(
+                    f"Onboarding returned unexpected data type: {type(result.data)}"
+                )
                 await cl.Message(
-                    content=f"Sorry, I couldn't generate pedagogical guidelines: {guidelines_result}"
+                    content="Sorry, something went wrong during onboarding."
                 ).send()
-                cl.user_session.set("current_stage", "complete")  # End flow on error
-        elif isinstance(result.data, str):
-            # Onboarding agent asking for more info
-            logger.info("Onboarding agent needs more info.")
-            await cl.Message(content=result.data).send()
-        else:
-            # Handle unexpected onboarding result type
+                cl.user_session.set("current_stage", "complete")  # End flow
+
+        except Exception as e:
             logger.error(
-                f"Onboarding returned unexpected data type: {type(result.data)}"
-            )
+                f"Error running Onboarding Agent: {e}", exc_info=True
+            )  # Add traceback
             await cl.Message(
-                content="Sorry, something went wrong during onboarding."
+                content=f"An error occurred during onboarding processing: {e}"
             ).send()
-            cl.user_session.set("current_stage", "complete")  # End flow
+            cl.user_session.set("current_stage", "complete")
 
     # --- Teaching Stage Logic ---
     elif current_stage == "teaching":

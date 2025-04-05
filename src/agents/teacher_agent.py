@@ -24,6 +24,7 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
             "**Your Task:**\n"
             "You will receive the `Pedagogical Guideline` for how to teach, and the `Current Learning Step` description. "
             "Your job is to generate the *initial* conversational text to present this step to the student. "
+            'Critically, after introducing the topic, you MUST immediately transition into the first piece of instruction, a relevant example, or a guiding question *about the topic itself* to encourage engagement. Do NOT simply ask "Are you ready?" or similar generic readiness questions. '
             "Make sure your response directly addresses the learning step and follows the spirit of the guideline "
             "(e.g., if the guideline suggests examples first, start with an example; if it suggests concepts first, start with an explanation). "
             "Keep your tone supportive and engaging.\n\n"
@@ -31,7 +32,7 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
             "- Pedagogical Guideline: [Guideline text]\n"
             "- Current Learning Step: [Step description text]\n\n"
             "**Output Format:**\n"
-            "Respond *only* with the conversational text string to present the step to the student."
+            "Respond *only* with the conversational text string to present the step and begin the interaction."
         ),
     )
 
