@@ -11,7 +11,18 @@ from pydantic_ai.models.openai import OpenAIModel
 
 
 def create_teacher_agent(model: OpenAIModel) -> Agent:
-    """Creates the Teacher Agent instance."""
+    """Creates the Teacher Agent instance.
+
+    This agent is responsible for presenting a learning step to the student
+    and providing follow-up guidance based on pedagogical guidelines and the
+    student's response.
+
+    Args:
+        model: The PydanticAI model instance (e.g., OpenAIModel configured for OpenRouter).
+
+    Returns:
+        An initialized Agent instance for the Teacher.
+    """
     # For MVP, the agent just initiates the conversation for the *first* step.
     # It receives the step description and pedagogical guideline.
     # It needs to output conversational text (string).

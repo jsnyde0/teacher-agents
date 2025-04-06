@@ -8,7 +8,18 @@ from pydantic_ai.models.openai import OpenAIModel
 
 
 def create_step_evaluator_agent(model: OpenAIModel) -> Agent:
-    """Creates the Step Evaluator Agent instance."""
+    """Creates the Step Evaluator Agent instance.
+
+    This agent analyzes a student's response in the context of the teacher's
+    last message to determine if the student is ready to proceed to the next
+    learning step. It outputs a constrained literal: PROCEED, STAY, or UNCLEAR.
+
+    Args:
+        model: The PydanticAI model instance (e.g., OpenAIModel configured for OpenRouter).
+
+    Returns:
+        An initialized Agent instance for the Step Evaluator.
+    """
     return Agent(
         model=model,
         # The agent must return one of these exact strings

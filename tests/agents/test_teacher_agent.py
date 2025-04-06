@@ -38,6 +38,7 @@ def openai_model() -> OpenAIModel:
 # --- Tests ---
 
 
+@pytest.mark.llm
 @pytest.mark.asyncio
 async def test_teacher_agent_mvp_output(openai_model: OpenAIModel):
     """Tests the Teacher Agent's ability to generate initial step guidance."""

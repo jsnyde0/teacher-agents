@@ -44,6 +44,7 @@ openrouter_model = OpenAIModel(
 # --- Integration Test for Conversational Onboarding ---
 
 
+@pytest.mark.llm
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not OPENROUTER_API_KEY, reason="OPENROUTER_API_KEY not set in environment"

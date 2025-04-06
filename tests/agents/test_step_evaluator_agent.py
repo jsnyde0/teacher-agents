@@ -85,6 +85,7 @@ def openai_model() -> OpenAIModel:
         ("Think about the structure.", "Cool.", "UNCLEAR"),
     ],
 )
+@pytest.mark.llm
 @pytest.mark.asyncio
 async def test_step_evaluator_agent_scenarios(
     openai_model: OpenAIModel,
