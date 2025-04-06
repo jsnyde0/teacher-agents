@@ -3,24 +3,27 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
+from .journey_crafter_agent import LearningPlan
+
 # Import related data models
 from .onboarding_agent import OnboardingData
 from .pedagogical_master_agent import PedagogicalGuidelines
-from .journey_crafter_agent import LearningPlan
 
 
 # --- Data Model for Output ---
 class TeacherResponse(BaseModel):
     """Teaching response from the Teacher Agent."""
-    
+
     content: str = Field(
-        ..., description="The teaching content, explanations, examples, and questions for the student."
+        ...,
+        description="The teaching content, explanations, examples, and questions for the student.",
     )
     current_step_index: int = Field(
         ..., description="Index of the current learning plan step being taught."
     )
     completed: bool = Field(
-        False, description="Whether this step is considered completed and should move to the next."
+        False,
+        description="Whether this step is considered completed and should move to the next.",
     )
 
 
@@ -48,7 +51,6 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
             "You are an expert Teacher Agent. Your task is to interact with the student, "
             "executing the learning plan step-by-step while adhering to the pedagogical guidelines. "
             "You will focus on the current step only, providing explanations, examples, and asking questions.\n\n"
-            
             "**Input Analysis:**\n"
             "You'll receive:\n"
             "1. The student's OnboardingData (Point A, Point B, Preferences)\n"
@@ -57,7 +59,6 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
             "4. The current step index to focus on\n"
             "5. The student's message/question\n"
             "6. The conversation history\n\n"
-            
             "**Teaching Approach:**\n"
             "1. **Focus on the current step only**. If the student asks about topics in future steps, gently redirect them.\n"
             "2. **Follow the pedagogical guidelines** carefully in your teaching style.\n"
@@ -66,13 +67,11 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
             "5. **Ask checking questions** to verify understanding.\n"
             "6. **Respond to student questions** related to the current topic in-depth.\n"
             "7. **Determine when to advance** to the next step based on student demonstrations of understanding.\n\n"
-            
             "**Output Format:**\n"
             "Respond with a TeacherResponse that includes:\n"
             "1. `content`: Your teaching explanation, examples, and questions.\n"
             "2. `current_step_index`: The step index you're currently teaching.\n"
             "3. `completed`: Whether this step is complete and should advance to the next step.\n\n"
-            
             "**Important Rules:**\n"
             "- Your teaching must be accurate, clear, and directly relevant to the current step.\n"
             "- Don't introduce concepts that are too advanced for the student's current level.\n"
@@ -90,7 +89,7 @@ def prepare_teacher_input(
     guidelines: PedagogicalGuidelines,
     learning_plan: LearningPlan,
     current_step_index: int,
-    user_message: str
+    user_message: str,
 ) -> str:
     """
     Creates a formatted input prompt for the teacher agent based on the current session state.
@@ -100,7 +99,7 @@ def prepare_teacher_input(
         current_step = "FINAL REVIEW: Review all previous steps and check for overall understanding."
     else:
         current_step = learning_plan.steps[current_step_index]
-    
+
     # Create the combined input prompt
     return (
         f"Based on the following information, teach the student about the current step:\n\n"

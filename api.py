@@ -1,17 +1,17 @@
 # api.py
 import os
-from typing import Dict, List, Any
-import asyncio # Import asyncio for async operations
+from typing import Any, Dict, List
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware  # Import CORS middleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from pydantic_ai.messages import ModelMessage  # Import ModelMessage
 
 # Agent imports
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.messages import ModelMessage # Import ModelMessage
+
 from src.agents.journey_crafter_agent import (
     LearningPlan,
     create_journey_crafter_agent,
@@ -21,6 +21,7 @@ from src.agents.pedagogical_master_agent import (
     PedagogicalGuidelines,
     create_pedagogical_master_agent,
 )
+
 # Import the new Teacher Agent
 from src.agents.teacher_agent import (
     TeacherResponse,
@@ -66,21 +67,25 @@ print("CORS middleware configured")
 # Use Redis or a database for production.
 sessions: Dict[str, Dict[str, Any]] = {}
 
+
 # --- API Request and Response Models ---
 class ChatMessageRequest(BaseModel):
     session_id: str
     message: str
 
+
 class ChatMessageResponse(BaseModel):
     reply: str
     session_id: str
-    current_stage: str | None = None # To inform the frontend about the state
+    current_stage: str | None = None  # To inform the frontend about the state
     # Optionally add other data fields if needed by the frontend
     # e.g., onboarding_data: OnboardingData | None = None
     # e.g., pedagogical_guidelines: PedagogicalGuidelines | None = None
     # e.g., learning_plan: LearningPlan | None = None
 
+
 # --- Helper Functions ---
+
 
 def initialize_session_state(session_id: str):
     """Initializes agents and state for a new session."""
@@ -104,7 +109,7 @@ def initialize_session_state(session_id: str):
             "learning_plan": None,
             "current_step_index": 0,
             "current_stage": "onboarding",
-            "initialization_error": "API Key missing"
+            "initialization_error": "API Key missing",
         }
         print(f"Created error state for session {session_id}")
         return
@@ -139,13 +144,13 @@ def initialize_session_state(session_id: str):
             "pedagogical_master_agent": pedagogical_master_agent,
             "journey_crafter_agent": journey_crafter_agent,
             "teacher_agent": teacher_agent,
-            "message_history": [], # Initialize empty history
+            "message_history": [],  # Initialize empty history
             "onboarding_data": None,
             "pedagogical_guidelines": None,
             "learning_plan": None,
             "current_step_index": 0,
-            "current_stage": "onboarding", # Start at onboarding
-            "initialization_error": None
+            "current_stage": "onboarding",  # Start at onboarding
+            "initialization_error": None,
         }
         print(f"Successfully initialized session {session_id}")
         print("=== Session initialization complete ===\n")
@@ -164,7 +169,7 @@ def initialize_session_state(session_id: str):
             "learning_plan": None,
             "current_step_index": 0,
             "current_stage": "error",
-            "initialization_error": str(e)
+            "initialization_error": str(e),
         }
         print(f"Created error state for session {session_id}")
         print("=== Session initialization failed ===\n")
@@ -216,7 +221,9 @@ async def run_pedagogical_master_api(
 
 
 async def run_journey_crafter_api(
-    session_state: Dict[str, Any], onboarding_data: OnboardingData, guidelines: PedagogicalGuidelines
+    session_state: Dict[str, Any],
+    onboarding_data: OnboardingData,
+    guidelines: PedagogicalGuidelines,
 ) -> LearningPlan | str:
     """Runs the JCA using the agent instance from session_state."""
     print(f"\n=== Running Journey Crafter Agent ===")
@@ -265,6 +272,7 @@ async def run_journey_crafter_api(
         print("=== JCA execution failed ===\n")
         return error_msg
 
+
 async def run_teacher_agent_api(
     session_state: Dict[str, Any], user_message: str
 ) -> TeacherResponse | str:
@@ -277,13 +285,13 @@ async def run_teacher_agent_api(
     if not teacher:
         print("ERROR: Teacher Agent not found in session state")
         return "Error: Teacher Agent not found in session state."
-    
+
     # Get required data from session state
     onboarding_data = session_state.get("onboarding_data")
     guidelines = session_state.get("pedagogical_guidelines")
     learning_plan = session_state.get("learning_plan")
     current_step_index = session_state.get("current_step_index", 0)
-    
+
     if not onboarding_data or not guidelines or not learning_plan:
         print("ERROR: Missing required data for Teacher Agent")
         print(f"- Onboarding data present: {bool(onboarding_data)}")
@@ -363,6 +371,7 @@ async def run_teacher_agent_api(
         print("=== Teacher Agent execution failed ===\n")
         return error_msg
 
+
 async def process_message(session_id: str, user_message: str) -> ChatMessageResponse:
     """Processes the user message using the appropriate agent based on session state."""
     print(f"\n=== Processing message for session {session_id} ===")
@@ -390,24 +399,24 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
     # Add session_id to state for logging in helper functions if needed
     session_state["session_id"] = session_id
 
-    reply_message = "An unexpected error occurred." # Default error reply
+    reply_message = "An unexpected error occurred."  # Default error reply
 
     # --- Stage: Teaching (after planning complete) ---
     if current_stage == "teaching":
         print("\nProcessing teaching stage...")
         # Run the Teacher Agent with the user's message
         teacher_result = await run_teacher_agent_api(session_state, user_message)
-        
+
         if isinstance(teacher_result, TeacherResponse):
             # Use the content from the teacher agent as the reply
             reply_message = teacher_result.content
-            
+
             # Update the current step index if the step is completed
             if teacher_result.completed:
                 current_step_index = session_state.get("current_step_index", 0) + 1
                 print(f"Step completed - moving to step {current_step_index + 1}")
                 session_state["current_step_index"] = current_step_index
-                
+
                 # Check if we've completed all steps
                 learning_plan = session_state.get("learning_plan")
                 if learning_plan and current_step_index >= len(learning_plan.steps):
@@ -424,7 +433,7 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
             print(f"ERROR from Teacher Agent: {teacher_result}")
             reply_message = f"Error running Teacher Agent: {teacher_result}"
             session_state["current_stage"] = "error"
-    
+
     # --- Handle stage transition from "complete" (planning) to "teaching" ---
     elif current_stage == "complete":
         print("\nProcessing complete stage...")
@@ -438,15 +447,19 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                 print("Transitioning to teaching stage")
                 session_state["current_stage"] = "teaching"
                 session_state["current_step_index"] = 0
-                
+
                 # Run the Teacher Agent for the first step
-                teacher_result = await run_teacher_agent_api(session_state, "Let's begin with the first step.")
-                
+                teacher_result = await run_teacher_agent_api(
+                    session_state, "Let's begin with the first step."
+                )
+
                 if isinstance(teacher_result, TeacherResponse):
                     print("First teaching step initialized successfully")
                     # Use the content from the teacher agent as the reply
-                    reply_message = f"**Starting Teaching Process**\n\n{teacher_result.content}"
-                    
+                    reply_message = (
+                        f"**Starting Teaching Process**\n\n{teacher_result.content}"
+                    )
+
                     # Update the current step index if the step is completed (unlikely for first interaction)
                     if teacher_result.completed:
                         print("First step already completed")
@@ -485,14 +498,18 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
             print("ERROR: Onboarding Agent not available")
             reply_message = "Error: Onboarding Agent not available for this session."
             session_state["current_stage"] = "error"
-            sessions[session_id] = session_state # Update state before returning
-            return ChatMessageResponse(reply=reply_message, session_id=session_id, current_stage="error")
+            sessions[session_id] = session_state  # Update state before returning
+            return ChatMessageResponse(
+                reply=reply_message, session_id=session_id, current_stage="error"
+            )
         else:
             try:
                 print("Running Onboarding Agent...")
                 # Assuming onboarding_agent.run is awaitable
                 # If run is blocking, use: oa_result = await asyncio.to_thread(onboarding_agent.run, user_message, message_history=message_history)
-                oa_result = await onboarding_agent.run(user_message, message_history=message_history)
+                oa_result = await onboarding_agent.run(
+                    user_message, message_history=message_history
+                )
 
                 # Update history immediately after successful run
                 print("Updating message history")
@@ -504,22 +521,26 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                     # --- Onboarding Complete: Auto-trigger PMA and JCA --- #
                     onboarding_data = oa_result.data
                     session_state["onboarding_data"] = onboarding_data
-                    reply_message = ( # Initial reply confirming onboarding data
+                    reply_message = (  # Initial reply confirming onboarding data
                         f"Great, thank you! Onboarding complete:\n"
                         f"- **Point A:** {onboarding_data.point_a}\n"
                         f"- **Point B:** {onboarding_data.point_b}\n"
                         f"- **Preferences:** {onboarding_data.preferences}\n\n"
                         f"Now determining teaching approach..."
                     )
-                    session_state["current_stage"] = "pedagogy" # Tentative stage update
+                    session_state["current_stage"] = (
+                        "pedagogy"  # Tentative stage update
+                    )
 
                     print("Running Pedagogical Master Agent...")
                     # Run PMA
-                    pma_result = await run_pedagogical_master_api(session_state, onboarding_data)
+                    pma_result = await run_pedagogical_master_api(
+                        session_state, onboarding_data
+                    )
                     if isinstance(pma_result, PedagogicalGuidelines):
                         print("PMA completed successfully")
                         session_state["pedagogical_guidelines"] = pma_result
-                        reply_message = ( # Update reply with guideline
+                        reply_message = (  # Update reply with guideline
                             f"Great, thank you! Onboarding complete:\n"
                             f"- **Point A:** {onboarding_data.point_a}\n"
                             f"- **Point B:** {onboarding_data.point_b}\n"
@@ -527,11 +548,15 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                             f"**Suggested Guideline:** {pma_result.guideline}\n\n"
                             f"Now crafting the learning plan..."
                         )
-                        session_state["current_stage"] = "journey_crafting" # Update stage
+                        session_state["current_stage"] = (
+                            "journey_crafting"  # Update stage
+                        )
 
                         print("Running Journey Crafter Agent...")
                         # Run JCA
-                        jca_result = await run_journey_crafter_api(session_state, onboarding_data, pma_result)
+                        jca_result = await run_journey_crafter_api(
+                            session_state, onboarding_data, pma_result
+                        )
                         if isinstance(jca_result, LearningPlan):
                              print("JCA completed successfully")
                              plan_steps_text = "\n".join([f"  {i + 1}. {step}" for i, step in enumerate(jca_result.steps)])
@@ -588,8 +613,9 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
     return ChatMessageResponse(
         reply=reply_message,
         session_id=session_id,
-        current_stage=session_state.get("current_stage")
+        current_stage=session_state.get("current_stage"),
     )
+
 
 # --- API Endpoints ---
 @app.post("/chat", response_model=ChatMessageResponse)
@@ -605,7 +631,9 @@ async def chat_endpoint(request: ChatMessageRequest):
     if not OPENROUTER_API_KEY:
         print("ERROR: OPENROUTER_API_KEY not configured")
         # Check moved to initialization, but keep a check here for robustness
-        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not configured.")
+        raise HTTPException(
+            status_code=500, detail="OPENROUTER_API_KEY not configured."
+        )
 
     if not request.session_id:
         print("ERROR: Missing session_id")
@@ -618,7 +646,7 @@ async def chat_endpoint(request: ChatMessageRequest):
 
     print("Processing message...")
     # Process the message using our async helper function
-    response = await process_message(request.session_id, request.message) # Use await
+    response = await process_message(request.session_id, request.message)  # Use await
 
     # Check if process_message resulted in an error state
     if response.current_stage == "error":
@@ -632,10 +660,12 @@ async def chat_endpoint(request: ChatMessageRequest):
     print("=== Chat request complete ===\n")
     return response
 
+
 @app.get("/health")
 async def health_check():
     print("Health check requested")
     return {"status": "ok"}
+
 
 # --- Running the App (for local development) ---
 if __name__ == "__main__":

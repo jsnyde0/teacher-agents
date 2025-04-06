@@ -7,11 +7,16 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-# Import the agent creation function and TeacherResponse model
-from src.agents.teacher_agent import create_teacher_agent, TeacherResponse, prepare_teacher_input
+from src.agents.journey_crafter_agent import LearningPlan
 from src.agents.onboarding_agent import OnboardingData
 from src.agents.pedagogical_master_agent import PedagogicalGuidelines
-from src.agents.journey_crafter_agent import LearningPlan
+
+# Import the agent creation function and TeacherResponse model
+from src.agents.teacher_agent import (
+    TeacherResponse,
+    create_teacher_agent,
+    prepare_teacher_input,
+)
 
 # --- Test Setup ---
 
@@ -45,7 +50,7 @@ def sample_onboarding_data():
     return OnboardingData(
         point_a="Basic knowledge of programming concepts",
         point_b="Ability to write Python programs with lists and dictionaries",
-        preferences="Visual examples and practical exercises"
+        preferences="Visual examples and practical exercises",
     )
 
 
@@ -64,7 +69,7 @@ def sample_learning_plan():
         steps=[
             "Introduce the concept of Python lists and how to create an empty list.",
             "Explain list operations like append, insert, and remove.",
-            "Demonstrate list comprehensions for advanced usage."
+            "Demonstrate list comprehensions for advanced usage.",
         ]
     )
 
@@ -74,7 +79,9 @@ def sample_learning_plan():
 
 @pytest.mark.llm
 @pytest.mark.asyncio
-async def test_teacher_agent_response(openai_model, sample_onboarding_data, sample_guidelines, sample_learning_plan):
+async def test_teacher_agent_response(
+    openai_model, sample_onboarding_data, sample_guidelines, sample_learning_plan
+):
     """Tests the Teacher Agent's ability to generate teaching content in the correct format."""
     # Create the agent
     agent: Agent = create_teacher_agent(openai_model)
@@ -82,13 +89,13 @@ async def test_teacher_agent_response(openai_model, sample_onboarding_data, samp
     # Prepare input using the helper function
     current_step_index = 0
     user_message = "Hi, I'm ready to learn about Python lists!"
-    
+
     input_prompt = prepare_teacher_input(
         sample_onboarding_data,
         sample_guidelines,
         sample_learning_plan,
         current_step_index,
-        user_message
+        user_message,
     )
 
     try:
@@ -97,18 +104,28 @@ async def test_teacher_agent_response(openai_model, sample_onboarding_data, samp
 
         # Assertions based on updated TeacherResponse structure
         assert result.data is not None, "Agent should produce output."
-        assert isinstance(result.data, TeacherResponse), "Agent output should be a TeacherResponse."
-        
+        assert isinstance(result.data, TeacherResponse), (
+            "Agent output should be a TeacherResponse."
+        )
+
         # Check response structure
         assert hasattr(result.data, "content"), "Response should have content field."
-        assert hasattr(result.data, "current_step_index"), "Response should have current_step_index field."
-        assert hasattr(result.data, "completed"), "Response should have completed field."
-        
+        assert hasattr(result.data, "current_step_index"), (
+            "Response should have current_step_index field."
+        )
+        assert hasattr(result.data, "completed"), (
+            "Response should have completed field."
+        )
+
         # Check content
         assert len(result.data.content.strip()) > 0, "Content should not be empty."
-        assert result.data.current_step_index == 0, "Initial step index should match input."
-        assert isinstance(result.data.completed, bool), "Completed field should be a boolean."
-        
+        assert result.data.current_step_index == 0, (
+            "Initial step index should match input."
+        )
+        assert isinstance(result.data.completed, bool), (
+            "Completed field should be a boolean."
+        )
+
         # Basic content check
         output_lower = result.data.content.lower()
         assert "list" in output_lower, "Output should mention 'list'."
@@ -122,7 +139,7 @@ async def test_teacher_agent_response(openai_model, sample_onboarding_data, samp
         print(f"Usage: {result.usage()}")
         print("------------------------------------")
     except Exception as e:
-        if 'Received empty model response' in str(e):
+        if "Received empty model response" in str(e):
             pytest.skip("API returned empty response - skipping test")
         else:
             # Re-raise other errors
@@ -130,7 +147,9 @@ async def test_teacher_agent_response(openai_model, sample_onboarding_data, samp
 
 
 @pytest.mark.asyncio
-async def test_teacher_agent_step_progression(openai_model, sample_onboarding_data, sample_guidelines, sample_learning_plan):
+async def test_teacher_agent_step_progression(
+    openai_model, sample_onboarding_data, sample_guidelines, sample_learning_plan
+):
     """Tests the Teacher Agent's ability to evaluate step completion."""
     # Create the agent
     agent: Agent = create_teacher_agent(openai_model)
@@ -138,13 +157,13 @@ async def test_teacher_agent_step_progression(openai_model, sample_onboarding_da
     # Use a message that indicates understanding to trigger step completion
     current_step_index = 0
     user_message = "I understand Python lists now! An empty list is created with [] and I can add items with append(). Can you tell me more about list operations?"
-    
+
     input_prompt = prepare_teacher_input(
         sample_onboarding_data,
         sample_guidelines,
         sample_learning_plan,
         current_step_index,
-        user_message
+        user_message,
     )
 
     try:
@@ -154,15 +173,15 @@ async def test_teacher_agent_step_progression(openai_model, sample_onboarding_da
         # Assertion for step completion
         # Note: This might be flaky as it depends on the model's judgment of "understanding"
         # We're checking that the agent CAN mark a step as completed when appropriate
-        print(f"\n--- Testing step progression ---")
+        print("\n--- Testing step progression ---")
         print(f"User message demonstrating understanding: {user_message}")
         print(f"Agent marks step as completed: {result.data.completed}")
         print(f"Agent response: {result.data.content[:100]}...")
-        
+
         # We're not asserting the exact value of completed since it depends on model judgment
         # Just printing the result for manual review
     except Exception as e:
-        if 'Received empty model response' in str(e):
+        if "Received empty model response" in str(e):
             pytest.skip("API returned empty response - skipping test")
         else:
             # Re-raise other errors
