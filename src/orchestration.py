@@ -427,6 +427,209 @@ async def run_teaching_step(
         return None  # Indicate error
 
 
+# --- Internal Helper Functions for handle_message --- #
+
+
+async def _handle_teaching_proceed(
+    current_state: SessionState,
+    agents: Dict[str, Agent],
+    guidelines: PedagogicalGuidelines,
+    learning_plan_steps: List[str],
+    current_step_index: int,
+) -> Tuple[str, Dict[str, Any]]:
+    """Handles the logic when the Step Evaluator returns PROCEED."""
+    next_index = current_step_index + 1
+    state_updates = {"current_step_index": next_index}
+    reply_message = ""
+
+    if next_index < len(learning_plan_steps):
+        logger.info(f"Proceeding to step {next_index}")
+        teacher_agent = agents.get("teacher_agent")
+        teaching_message = await run_teaching_step(
+            teacher_agent=teacher_agent,
+            guidelines=guidelines,
+            learning_plan_steps=learning_plan_steps,
+            current_step_index=next_index,
+            is_follow_up=False,
+        )
+        if teaching_message:
+            reply_message = (
+                f"Great! Let's move to the next step.\\n\\n---\\n\\n{teaching_message}"
+            )
+            state_updates["last_teacher_message"] = teaching_message
+        else:
+            logger.error(f"Failed to get teaching message for step {next_index}.")
+            reply_message = (
+                "Ok, moving to the next step, but I couldn't prepare the content."
+            )
+            state_updates["current_stage"] = "error"
+    else:
+        logger.info("Learning plan complete.")
+        reply_message = "Congratulations! You've completed the learning plan."
+        state_updates["current_stage"] = "complete"
+
+    return reply_message, state_updates
+
+
+async def _handle_teaching_stay_unclear(
+    current_state: SessionState,
+    agents: Dict[str, Agent],
+    guidelines: PedagogicalGuidelines,
+    learning_plan_steps: List[str],
+    current_step_index: int,
+    last_teacher_message: str | None,
+    user_message: str,
+) -> Tuple[str, Dict[str, Any]]:
+    """Handles the logic when the Step Evaluator returns STAY or UNCLEAR."""
+    state_updates: Dict[str, Any] = {}
+    reply_message = ""
+    answer_evaluator_agent = agents.get("answer_evaluator_agent")
+
+    if not answer_evaluator_agent:
+        logger.error("Answer Evaluator agent missing.")
+        reply_message = "Error: Cannot evaluate answer context."
+        state_updates["current_stage"] = "error"
+        return reply_message, state_updates
+
+    answer_evaluation = await run_answer_evaluation(
+        answer_evaluator_agent=answer_evaluator_agent,
+        learning_plan_steps=learning_plan_steps,
+        current_step_index=current_step_index,
+        last_teacher_message=last_teacher_message,
+        user_message=user_message,
+    )
+
+    if answer_evaluation is None:
+        logger.error(
+            "Answer Evaluation failed, cannot proceed with teaching step or revision."
+        )
+        reply_message = "Sorry, I had trouble evaluating your answer."
+        # Keep stage teaching, but don't proceed further this turn?
+        return reply_message, state_updates  # Return empty updates
+    else:
+        # --- Potential JCA Revision Logic --- #
+        should_revise_plan = answer_evaluation.evaluation in [
+            "incorrect",
+            "partial",
+            "not_applicable",
+        ]
+        plan_revised_notification = ""
+
+        if should_revise_plan:
+            logger.info(
+                f"Answer evaluation ({answer_evaluation.evaluation}) suggests plan revision."
+            )
+            jca_agent = agents.get("journey_crafter_agent")
+            onboarding_data = current_state.get("onboarding_data")
+            pma_guidelines = current_state.get("pedagogical_guidelines")
+            current_plan = current_state.get("learning_plan", [])
+            history_before_jca = current_state.get("message_history", [])
+
+            if (
+                jca_agent
+                and onboarding_data
+                and pma_guidelines
+                and current_step_index >= 0
+                and current_step_index < len(current_plan)
+            ):
+                current_step_desc = current_plan[current_step_index]
+                remaining_steps = current_plan[current_step_index + 1 :]
+
+                revision_prompt = (
+                    f"**CRITICAL:** The student is very confused with the step: '{current_step_desc}'.\n"
+                    f"Student's message showing confusion: '{user_message}'.\n"
+                    f"Evaluation: {answer_evaluation.evaluation} - {answer_evaluation.explanation}\n"
+                    f"**TASK:** Propose a *completely different and simpler alternative plan* for the *next 2-3 steps* to overcome this specific confusion. Forget the original remaining steps ({remaining_steps}). Focus ONLY on getting the student past this immediate hurdle before resuming the main goal."
+                    f"Original Goal: {onboarding_data.point_b}. Guideline: {pma_guidelines.guideline}\n"
+                    f"Respond ONLY with the simple, alternative 2-3 step list."
+                )
+
+                try:
+                    logger.info("Running JCA for plan revision...")
+                    jca_revision_result = await jca_agent.run(
+                        revision_prompt, message_history=history_before_jca
+                    )
+                    # Update history state immediately
+                    state_updates["message_history"] = (
+                        history_before_jca + jca_revision_result.all_messages()
+                    )
+
+                    new_revised_steps = None
+                    if isinstance(
+                        jca_revision_result.data, LearningPlan
+                    ) and isinstance(jca_revision_result.data.steps, list):
+                        new_revised_steps = jca_revision_result.data.steps
+                    elif isinstance(jca_revision_result.data, list):
+                        new_revised_steps = jca_revision_result.data
+
+                    if new_revised_steps is not None:
+                        logger.info(
+                            f"JCA successfully revised remaining steps: {new_revised_steps}"
+                        )
+                        plan_prefix = current_plan[: current_step_index + 1]
+                        # Update learning_plan in the state_updates dict
+                        state_updates["learning_plan"] = plan_prefix + new_revised_steps
+                        plan_revised_notification = "\n*(Note: I've adjusted the upcoming plan based on your feedback.)*"
+                    else:
+                        logger.warning(
+                            f"JCA ran for revision but didn't return valid list. Type: {type(jca_revision_result.data)}. Keeping original plan."
+                        )
+                except Exception as jca_err:
+                    logger.error(
+                        f"Error running JCA for plan revision: {jca_err}", exc_info=True
+                    )
+                    # Keep original plan on error
+            else:
+                logger.warning(
+                    "Could not attempt plan revision due to missing JCA agent or context."
+                )
+        # --- End of JCA Revision Logic --- #
+
+        # Now, get the follow-up teaching message for the CURRENT step
+        teacher_agent = agents.get("teacher_agent")
+        # Use the potentially updated plan if revision occurred, otherwise original
+        final_plan_for_teacher = state_updates.get(
+            "learning_plan", current_state.get("learning_plan")
+        )
+
+        teaching_message = await run_teaching_step(
+            teacher_agent=teacher_agent,
+            guidelines=guidelines,
+            learning_plan_steps=final_plan_for_teacher,
+            current_step_index=current_step_index,
+            is_follow_up=True,
+            last_user_message=user_message,
+            answer_evaluation=answer_evaluation,
+        )
+        if teaching_message:
+            reply_message = (
+                teaching_message + plan_revised_notification
+            )  # Append revision note
+            state_updates["last_teacher_message"] = teaching_message
+        else:
+            logger.error("Failed to get teaching follow-up message.")
+            reply_message = "Sorry, I couldn't prepare the follow-up message."
+            state_updates["current_stage"] = "error"
+
+    return reply_message, state_updates
+
+
+async def _handle_teaching_error(
+    evaluation_result: str | None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Handles logic when step evaluation fails or returns unexpected value."""
+    state_updates = {}
+    if evaluation_result is None:
+        logger.error("Step Evaluation failed.")
+        reply_message = "Sorry, I had trouble evaluating your progress."
+    else:  # Unexpected value
+        logger.error(f"Step Evaluator returned unexpected value: {evaluation_result}")
+        reply_message = "Sorry, I had trouble processing the evaluation."
+        state_updates["current_stage"] = "error"
+
+    return reply_message, state_updates
+
+
 # --- Control Flow Orchestration --- #
 async def handle_message(
     session_state: SessionState, user_message: str
@@ -446,15 +649,15 @@ async def handle_message(
         - The reply message string to be sent to the user.
         - The *new*, updated session state dictionary.
     """
-    # 1. Deep copy the input state to avoid modifying the original dict directly
-    #    until the end. This makes state updates cleaner.
+    # 1. Copy state to modify
     current_state = session_state.copy()
 
-    # 2. Get necessary info from current state
+    # 2. Get common info from current state
     current_stage = current_state.get("current_stage", "onboarding")
     agents = current_state.get("agents", {})
     message_history = current_state.get("message_history", [])
     reply_message = "An error occurred processing your message."  # Default error reply
+    state_updates: Dict[str, Any] = {}
 
     logger.info(f"Handling message for stage: {current_stage}")
 
@@ -464,25 +667,26 @@ async def handle_message(
         if not onboarding_agent:
             logger.error("Onboarding Agent not found in state.")
             reply_message = "Error: Onboarding agent missing."
-            current_state["current_stage"] = "error"
+            state_updates["current_stage"] = "error"
         else:
             oa_result, updated_history = await run_onboarding_step(
                 onboarding_agent=onboarding_agent,
                 user_message=user_message,
                 message_history=message_history,
             )
-            current_state["message_history"] = updated_history
+            # Update history immediately
+            state_updates["message_history"] = updated_history
 
             if isinstance(oa_result, OnboardingData):
                 logger.info("Onboarding complete. Running post-onboarding pipeline...")
-                current_state["onboarding_data"] = oa_result
+                state_updates["onboarding_data"] = oa_result
                 pma_agent = agents.get("pedagogical_master_agent")
                 jca_agent = agents.get("journey_crafter_agent")
 
                 if not pma_agent or not jca_agent:
                     logger.error("PMA or JCA agent missing.")
                     reply_message = "Error: Planning agents not available."
-                    current_state["current_stage"] = "error"
+                    state_updates["current_stage"] = "error"
                 else:
                     (
                         guidelines,
@@ -493,22 +697,23 @@ async def handle_message(
                         pma_agent=pma_agent,
                         jca_agent=jca_agent,
                         onboarding_data=oa_result,
-                        message_history=updated_history,
+                        message_history=updated_history,  # Use history from onboarding step
                     )
-                    current_state["message_history"] = final_history
+                    # Update history again
+                    state_updates["message_history"] = final_history
 
                     if pipeline_error:
                         logger.error(f"Pipeline failed: {pipeline_error}")
                         reply_message = (
                             f"Sorry, I couldn't complete the planning: {pipeline_error}"
                         )
-                        current_state["current_stage"] = "error"
+                        state_updates["current_stage"] = "error"
                     elif guidelines and plan_steps:
                         logger.info("Pipeline successful. Moving to teaching.")
-                        current_state["pedagogical_guidelines"] = guidelines
-                        current_state["learning_plan"] = plan_steps
-                        current_state["current_step_index"] = 0
-                        current_state["current_stage"] = "teaching"
+                        state_updates["pedagogical_guidelines"] = guidelines
+                        state_updates["learning_plan"] = plan_steps
+                        state_updates["current_step_index"] = 0
+                        state_updates["current_stage"] = "teaching"
 
                         # Trigger Teacher for Step 0
                         teacher_agent = agents.get("teacher_agent")
@@ -520,9 +725,8 @@ async def handle_message(
                             is_follow_up=False,
                         )
 
-                        # Format the initial reply message WITHOUT the plan
                         if initial_teaching_message:
-                            current_state["last_teacher_message"] = (
+                            state_updates["last_teacher_message"] = (
                                 initial_teaching_message
                             )
                             reply_message = (
@@ -532,31 +736,32 @@ async def handle_message(
                         else:
                             logger.error("Failed to get initial teaching message.")
                             reply_message = "Planning complete, but failed to prepare the first teaching step."
-                            current_state["current_stage"] = "error"
+                            state_updates["current_stage"] = "error"
                     else:
                         logger.error("Pipeline returned unexpected state.")
                         reply_message = (
                             "Sorry, an unexpected error occurred during planning."
                         )
-                        current_state["current_stage"] = "error"
+                        state_updates["current_stage"] = "error"
 
             elif isinstance(oa_result, str):
                 logger.info("Onboarding agent needs more info.")
                 reply_message = oa_result
-                # Stage remains 'onboarding'
+                # Stage remains 'onboarding', no state updates needed beyond history
             else:  # Onboarding failed (returned None)
                 logger.error("Onboarding step failed.")
                 reply_message = "Sorry, something went wrong during onboarding."
-                current_state["current_stage"] = "error"
+                state_updates["current_stage"] = "error"
 
     # --- Teaching Stage --- #
     elif current_stage == "teaching":
+        # Retrieve necessary state and agents
         step_evaluator_agent = agents.get("step_evaluator_agent")
         last_teacher_message = current_state.get("last_teacher_message")
         learning_plan_steps = current_state.get("learning_plan")
         current_step_index = current_state.get("current_step_index", -1)
         guidelines = current_state.get("pedagogical_guidelines")
-        teacher_agent = agents.get("teacher_agent")
+        teacher_agent = agents.get("teacher_agent")  # Needed by helpers
 
         # Check for required data for teaching stage
         if (
@@ -568,208 +773,61 @@ async def handle_message(
         ):
             logger.error("Missing required data/agents for teaching stage.")
             reply_message = "Error: Session state is incomplete for teaching."
-            current_state["current_stage"] = "error"
+            state_updates["current_stage"] = "error"
         else:
+            # Run step evaluation
             evaluation = await run_step_evaluation(
                 step_evaluator_agent=step_evaluator_agent,
                 last_teacher_message=last_teacher_message,
                 user_message=user_message,
             )
 
-            if evaluation is None:
-                logger.error("Step Evaluation failed.")
-                reply_message = "Sorry, I had trouble evaluating your progress."
-                # Keep current stage? Or set to error? For now, just reply.
-            elif evaluation == "PROCEED":
-                next_index = current_step_index + 1
-                current_state["current_step_index"] = next_index
-
-                if next_index < len(learning_plan_steps):
-                    logger.info(f"Proceeding to step {next_index}")
-                    teaching_message = await run_teaching_step(
-                        teacher_agent=teacher_agent,
-                        guidelines=guidelines,
-                        learning_plan_steps=learning_plan_steps,
-                        current_step_index=next_index,
-                        is_follow_up=False,
-                    )
-                    if teaching_message:
-                        reply_message = f"Great! Let's move to the next step.\n\n---\\n\n{teaching_message}"
-                        current_state["last_teacher_message"] = teaching_message
-                    else:
-                        logger.error(
-                            f"Failed to get teaching message for step {next_index}."
-                        )
-                        reply_message = "Ok, moving to the next step, but I couldn't prepare the content."
-                        current_state["current_stage"] = "error"
-                else:
-                    logger.info("Learning plan complete.")
-                    reply_message = (
-                        "Congratulations! You've completed the learning plan."
-                    )
-                    current_state["current_stage"] = "complete"
-
+            # Delegate to helper based on evaluation result
+            if evaluation == "PROCEED":
+                reply_message, updates = await _handle_teaching_proceed(
+                    current_state=current_state,
+                    agents=agents,
+                    guidelines=guidelines,
+                    learning_plan_steps=learning_plan_steps,
+                    current_step_index=current_step_index,
+                )
+                state_updates.update(updates)
             elif evaluation == "STAY" or evaluation == "UNCLEAR":
-                logger.info(f"Eval = {evaluation}. Running Answer Evaluator.")
-                answer_evaluator_agent = agents.get("answer_evaluator_agent")
-                if not answer_evaluator_agent:
-                    logger.error("Answer Evaluator agent missing.")
-                    reply_message = "Error: Cannot evaluate answer context."
-                    current_state["current_stage"] = "error"
-                else:
-                    answer_evaluation = await run_answer_evaluation(
-                        answer_evaluator_agent=answer_evaluator_agent,
-                        learning_plan_steps=learning_plan_steps,
-                        current_step_index=current_step_index,
-                        last_teacher_message=last_teacher_message,
-                        user_message=user_message,
-                    )
-                    if answer_evaluation is None:
-                        logger.error("Answer Evaluation failed.")
-                        reply_message = "Sorry, I had trouble evaluating your answer."
-                        # Keep stage or set error?
-                    else:
-                        # --> Add JCA Revision Logic <---
-                        should_revise_plan = answer_evaluation.evaluation in [
-                            "incorrect",
-                            "partial",
-                            "not_applicable",
-                        ]
-                        plan_revised_message = ""
-
-                        if should_revise_plan:
-                            logger.info(
-                                f"Answer evaluation ({answer_evaluation.evaluation}) suggests plan revision."
-                            )
-                            jca_agent = agents.get("journey_crafter_agent")
-                            onboarding_data = current_state.get("onboarding_data")
-                            pma_guidelines = current_state.get(
-                                "pedagogical_guidelines"
-                            )  # Use PMA guidelines
-                            current_plan = current_state.get("learning_plan", [])
-                            current_index = current_state.get("current_step_index", -1)
-                            history = current_state.get("message_history", [])
-
-                            if (
-                                jca_agent
-                                and onboarding_data
-                                and pma_guidelines
-                                and current_index >= 0
-                            ):
-                                current_step_desc = current_plan[current_index]
-                                remaining_steps = current_plan[current_index + 1 :]
-
-                                revision_prompt = (
-                                    f"The student is struggling with the step: '{current_step_desc}'.\n"
-                                    f"Their last message was: '{user_message}'.\n"
-                                    f"Evaluation of their response: {answer_evaluation.evaluation} - {answer_evaluation.explanation}\n"
-                                    f"The originally planned remaining steps were: {remaining_steps}\n"
-                                    f"Based on the student's difficulty and the evaluation, please revise or regenerate the plan for the *remaining* steps only (starting after the current struggling step). "
-                                    f"Consider breaking down future steps or adding prerequisites if needed. Adhere to the original goal and guidelines.\n"
-                                    f"Student Goal (Point B): {onboarding_data.point_b}\n"
-                                    f"Pedagogical Guideline: {pma_guidelines.guideline}\n"
-                                    f"Respond ONLY with the revised list of remaining steps."
-                                )
-
-                                try:
-                                    logger.info("Running JCA for plan revision...")
-                                    jca_revision_result = await jca_agent.run(
-                                        revision_prompt, message_history=history
-                                    )
-                                    # Update history immediately after JCA run
-                                    current_state["message_history"] = (
-                                        history + jca_revision_result.all_messages()
-                                    )
-
-                                    # Check if JCA returned a list of steps (adjust based on actual JCA output structure if needed)
-                                    new_revised_steps = None
-                                    if isinstance(
-                                        jca_revision_result.data, LearningPlan
-                                    ) and isinstance(
-                                        jca_revision_result.data.steps, list
-                                    ):
-                                        new_revised_steps = (
-                                            jca_revision_result.data.steps
-                                        )
-                                    elif isinstance(
-                                        jca_revision_result.data, list
-                                    ):  # If JCA just returns a list
-                                        new_revised_steps = jca_revision_result.data
-
-                                    if (
-                                        new_revised_steps is not None
-                                    ):  # Allow empty list if JCA decides no more steps needed
-                                        logger.info(
-                                            f"JCA successfully revised remaining steps: {new_revised_steps}"
-                                        )
-                                        plan_prefix = current_plan[: current_index + 1]
-                                        current_state["learning_plan"] = (
-                                            plan_prefix + new_revised_steps
-                                        )
-                                        plan_revised_message = "\n*(Note: I've adjusted the upcoming plan based on your feedback.)*"
-                                    else:
-                                        logger.warning(
-                                            f"JCA ran for revision but didn't return a valid list of steps. Type: {type(jca_revision_result.data)}. Keeping original plan."
-                                        )
-
-                                except Exception as jca_err:
-                                    logger.error(
-                                        f"Error running JCA for plan revision: {jca_err}",
-                                        exc_info=True,
-                                    )
-                                    # Keep original plan on error
-                            else:
-                                logger.warning(
-                                    "Could not attempt plan revision due to missing JCA agent or context."
-                                )
-                        # --- End of JCA Revision Logic --- #
-
-                        # Now, get the follow-up teaching message for the CURRENT step
-                        teaching_message = await run_teaching_step(
-                            teacher_agent=teacher_agent,
-                            guidelines=guidelines,
-                            learning_plan_steps=learning_plan_steps,
-                            current_step_index=current_step_index,
-                            is_follow_up=True,
-                            last_user_message=user_message,
-                            answer_evaluation=answer_evaluation,
-                        )
-                        if teaching_message:
-                            reply_message = (
-                                teaching_message + plan_revised_message
-                            )  # Append revision note if plan was changed
-                            current_state["last_teacher_message"] = teaching_message
-                        else:
-                            logger.error("Failed to get teaching follow-up message.")
-                            reply_message = (
-                                "Sorry, I couldn't prepare the follow-up message."
-                            )
-                            current_state["current_stage"] = "error"
-            else:  # Should not happen
-                logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
-                reply_message = "Sorry, I had trouble processing the evaluation."
-                current_state["current_stage"] = "error"
+                reply_message, updates = await _handle_teaching_stay_unclear(
+                    current_state=current_state,
+                    agents=agents,
+                    guidelines=guidelines,
+                    learning_plan_steps=learning_plan_steps,
+                    current_step_index=current_step_index,
+                    last_teacher_message=last_teacher_message,
+                    user_message=user_message,
+                )
+                state_updates.update(updates)
+            else:  # Includes None (error) or unexpected values
+                reply_message, updates = await _handle_teaching_error(
+                    evaluation_result=evaluation  # Pass the result for logging
+                )
+                state_updates.update(updates)
 
     # --- Complete Stage --- #
     elif current_stage == "complete":
         logger.info("Handling message in complete stage.")
         reply_message = "Our current learning session is complete. Feel free to start a new chat to learn something else!"
-        # Stage remains 'complete'
+        # No state updates needed, stage remains 'complete'
 
     # --- Error / Unexpected Stage --- #
     else:
-        # This case handles stages like 'error' or any other unexpected value
-        if current_stage != "error":  # Avoid logging the same error repeatedly
+        if current_stage != "error":
             logger.error(f"Reached unexpected stage in handle_message: {current_stage}")
         reply_message = (
             "Sorry, an unexpected error occurred. Please try starting a new chat."
         )
-        current_state["current_stage"] = "error"  # Ensure stage is error
+        state_updates["current_stage"] = "error"
 
-    # Message history is updated within the called functions (onboarding, pipeline)
-    # If teaching stage needs history updates, it should be added there.
+    # 4. Apply all accumulated state updates to the state dictionary
+    current_state.update(state_updates)
 
-    # 4. Return the final reply and the *modified* current_state dictionary
+    # 5. Return the final reply and the *modified* current_state dictionary
     logger.info(
         f"handle_message complete. New stage: {current_state.get('current_stage')}"
     )

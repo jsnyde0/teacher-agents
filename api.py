@@ -255,6 +255,12 @@ async def chat_endpoint(request: ChatMessageRequest):
     print("Successfully processed chat request")
     print(f"Response stage: {response.current_stage}")
     print("=== Chat request complete ===\n")
+
+    # --> Log the final response payload before returning <---
+    logger.info(
+        f"API Response Payload: {response.model_dump_json(indent=2)}"
+    )  # Log JSON representation
+
     return response
 
 
