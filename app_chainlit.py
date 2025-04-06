@@ -5,6 +5,8 @@ import os
 from typing import List, Union
 
 import chainlit as cl
+
+# --> Import httpx <---
 from dotenv import load_dotenv
 
 # --> Import Agent <---
@@ -14,6 +16,12 @@ from pydantic_ai.messages import ModelMessage
 # Import agent creation logic and model setup
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
+
+# --> Import AnswerEvaluationResult model <---
+from src.agents.answer_evaluator_agent import (
+    AnswerEvaluationResult,
+    create_answer_evaluator_agent,
+)
 
 # Import JCA components
 from src.agents.journey_crafter_agent import (
@@ -54,7 +62,7 @@ async def on_chat_start():
         ).send()
         return
 
-    # Configure the model (can be shared by agents)
+    # Configure the common model provider
     model = OpenAIModel(
         MODEL_NAME,
         provider=OpenAIProvider(
@@ -69,6 +77,10 @@ async def on_chat_start():
     journey_crafter_agent = create_journey_crafter_agent(model)  # Create JCA
     teacher_agent = create_teacher_agent(model)
     step_evaluator_agent = create_step_evaluator_agent(model)
+    # --> Initialize Answer Evaluation Agent <---
+    answer_evaluator_agent = create_answer_evaluator_agent(model)
+    # --> Log after creation <---
+    logger.info(f"Created answer_evaluator_agent instance: {answer_evaluator_agent}")
 
     # Store agents and message history in the user session
     cl.user_session.set("onboarding_agent", onboarding_agent)
@@ -76,6 +88,12 @@ async def on_chat_start():
     cl.user_session.set("journey_crafter_agent", journey_crafter_agent)  # Store JCA
     cl.user_session.set("teacher_agent", teacher_agent)
     cl.user_session.set("step_evaluator_agent", step_evaluator_agent)
+    # --> Store Answer Evaluation Agent in session <---
+    cl.user_session.set("answer_evaluator_agent", answer_evaluator_agent)
+    # --> Log after setting in session <---
+    logger.info(
+        "Stored answer_evaluator_agent in session with key 'answer_evaluator_agent'"
+    )
     cl.user_session.set("message_history", [])  # Initialize history
     cl.user_session.set("onboarding_data", None)  # To store OA result
     cl.user_session.set("pedagogical_guidelines", None)  # To store PMA result
@@ -155,7 +173,9 @@ async def run_journey_crafter(
 
 # --> Add Helper Function for Teacher Agent <---
 async def run_teacher_for_current_step(
-    is_follow_up: bool = False, last_user_message: str | None = None
+    is_follow_up: bool = False,
+    last_user_message: str | None = None,
+    answer_evaluation: AnswerEvaluationResult | None = None,
 ) -> str:
     """Runs the Teacher Agent for the current step and returns the message.
 
@@ -211,31 +231,29 @@ async def run_teacher_for_current_step(
             f"Running Teacher Agent for step {current_step_index} (initial prompt)."
         )
     else:
-        # Updated More Structured Sequential Prompt
-        if last_user_message is None:
-            # Fallback if message is somehow missing, though it shouldn't be
-            logger.warning(
-                f"Teacher follow-up called for step {current_step_index} without last_user_message."
+        # Follow-up prompt incorporating Answer Evaluation
+        if last_user_message is None or answer_evaluation is None:
+            logger.error(
+                f"Teacher follow-up called for step {current_step_index} without required context (message or evaluation)."
             )
-            last_user_message = "[Student message not available]"
+            return "Error: Missing context for follow-up."
 
-        input_prompt = (
-            f"The student needs to stay on the current learning step:\\n"
-            f"Current Learning Step: {current_step_description}\\n"
-            f"Pedagogical Guideline: {guideline_str}\\n"
-            f"Student's Last Message: '{last_user_message}'\\n\\n"
-            f"Your **Primary Task** is to evaluate the student's 'Last Message' in response to the 'Current Learning Step'. "
-            f"You MUST determine if the response is correct, incorrect, or partially correct. Then, you MUST respond following the 'Pedagogical Guideline'.\\n\\n"
-            f"1.  **Evaluate Correctness:** Determine if 'Student's Last Message' is a correct/relevant response to the 'Current Learning Step' context.\\n"
-            f"2.  **Formulate Response based on Guideline:**\\n"
-            f"    - **If Incorrect/Partially Correct:** State that the response isn't quite right and *specifically explain the error*. Then, provide a concise correction, hint, example, or question *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n"
-            f"    - **If Correct:** Acknowledge the correct answer briefly and positively. Then, proceed with the next logical explanation, example, or question *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n"
-            f"    - **If Unclear/Question:** Address the question or confusion directly, *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n\\n"
-            f"**CRITICAL:** The delivery style (e.g., Socratic questioning, examples first, direct explanation) of your entire response MUST adhere to the 'Pedagogical Guideline'. "
-            f"Do NOT simply repeat the initial introduction for this step."
-        )
+        # --> Ensure prompt construction is indented within this else block <---
+        input_prompt = f"""**CONTEXT:**
+- Current Learning Step Goal: {current_step_description}
+- Pedagogical Guideline: {guideline_str}
+- Student's Last Message: '{last_user_message}'
+- Answer Evaluation: {answer_evaluation.evaluation} (Explanation: {answer_evaluation.explanation})
+
+**Your Task:** Respond conversationally to the 'Student's Last Message' about the 'Current Learning Step Goal'. Your response MUST incorporate the 'Answer Evaluation' and strictly adhere to the 'Pedagogical Guideline'.
+
+1.  **Acknowledge/Feedback:** Briefly acknowledge the student's message, incorporating the provided 'Answer Evaluation' and 'Explanation' naturally into your feedback (e.g., "That's correct because...", "Not quite, the evaluation noted that...", "That's a good question...").
+2.  **Guideline-Driven Next Step:** Based on the evaluation and the 'Pedagogical Guideline', provide the *next* small piece of instruction, a clarifying question, a hint, or an example to continue the learning process for the *current* step. The *style* (e.g., Socratic, examples first) MUST match the Guideline.
+
+**IMPORTANT:** Do NOT use step markers. Generate a single, natural conversational response. Do NOT repeat the initial introduction for this step."""
+
         logger.info(
-            f"Running Teacher Agent for step {current_step_index} (follow-up prompt responding to: '{last_user_message[:50]}...')."
+            f"Running Teacher Agent for step {current_step_index} (follow-up prompt responding to: '{last_user_message[:50]}...' with evaluation: {answer_evaluation.evaluation})"
         )
 
     # --- Run agent ---
@@ -259,6 +277,20 @@ async def on_message(message: cl.Message):
     Handles incoming user messages, runs the appropriate agent based on state,
     and displays responses.
     """
+    # --> Log session keys at start of message handling <---
+    # logger.info(f"on_message START - Session keys: {list(cl.user_session.keys())}\") # Incorrect: UserSession has no .keys()
+    # --> Log existence of key session items instead <---
+    logger.info(
+        f"on_message START - Checking session: "
+        f" stage='{cl.user_session.get('current_stage')}', "
+        f" has_oa={cl.user_session.get('onboarding_agent') is not None}, "
+        f" has_pma={cl.user_session.get('pedagogical_master_agent') is not None}, "
+        f" has_jca={cl.user_session.get('journey_crafter_agent') is not None}, "
+        f" has_teacher={cl.user_session.get('teacher_agent') is not None}, "
+        f" has_stepeval={cl.user_session.get('step_evaluator_agent') is not None}, "
+        f" has_anseval={cl.user_session.get('answer_evaluator_agent') is not None}"
+    )
+
     current_stage = cl.user_session.get("current_stage", "onboarding")
     message_history: List[ModelMessage] = cl.user_session.get("message_history")
 
@@ -437,13 +469,79 @@ async def on_message(message: cl.Message):
 
             elif evaluation == "STAY" or evaluation == "UNCLEAR":
                 log_level = "STAY" if evaluation == "STAY" else "UNCLEAR"
-                logger.info(f"Student indicates {log_level}. Responding contextually.")
-                teaching_message = await run_teacher_for_current_step(
-                    is_follow_up=True, last_user_message=message.content
+                logger.info(
+                    f"Step Evaluator indicates {log_level}. Running Answer Evaluator."
                 )
-                # --> Store the teacher message <---
-                cl.user_session.set("last_teacher_message", teaching_message)
-                await cl.Message(content=teaching_message).send()
+
+                # --> Call Answer Evaluation Agent <---
+                answer_evaluator_agent: Agent = cl.user_session.get(
+                    "answer_evaluator_agent"
+                )
+                learning_plan: List[str] = cl.user_session.get("learning_plan")
+                current_step_index: int = cl.user_session.get("current_step_index")
+                current_step_description = learning_plan[current_step_index]
+
+                # --> Add logging to check retrieved values <---
+                logger.info(
+                    f"Retrieved answer_evaluator_agent: {answer_evaluator_agent}"
+                )
+                logger.info(
+                    f"Retrieved current_step_description: {current_step_description}"
+                )
+
+                if not answer_evaluator_agent or current_step_description is None:
+                    logger.error(
+                        "Missing Answer Evaluator or step description for evaluation."
+                    )
+                    await cl.Message(
+                        content="Error: Cannot evaluate answer context."
+                    ).send()
+                    return
+
+                answer_eval_prompt = (
+                    f"Current Learning Step Goal: {current_step_description}\\n"
+                    f"Teacher's Last Instruction/Question: {last_teacher_message or '(None)'}\\n"
+                    f"Student's Response: {message.content}"
+                )
+
+                try:
+                    answer_eval_result_obj = await answer_evaluator_agent.run(
+                        answer_eval_prompt
+                    )
+
+                    if isinstance(answer_eval_result_obj.data, AnswerEvaluationResult):
+                        answer_evaluation = answer_eval_result_obj.data
+                        logger.info(
+                            f"Answer Evaluation Result: {answer_evaluation.evaluation} - {answer_evaluation.explanation}"
+                        )
+
+                        # --> Call Teacher with evaluation result <---
+                        teaching_message = await run_teacher_for_current_step(
+                            is_follow_up=True,
+                            last_user_message=message.content,
+                            answer_evaluation=answer_evaluation,
+                        )
+                        cl.user_session.set("last_teacher_message", teaching_message)
+                        await cl.Message(content=teaching_message).send()
+                    else:
+                        logger.error(
+                            f"Answer Evaluator returned unexpected type: {type(answer_eval_result_obj.data)}"
+                        )
+                        await cl.Message(
+                            content="Error: Could not parse answer evaluation."
+                        ).send()
+                        # Fallback? Maybe just call teacher without evaluation?
+                        # For now, just stop to avoid confusing user further.
+                        return
+
+                except Exception as e:
+                    logger.error(
+                        f"Error running Answer Evaluator Agent: {e}", exc_info=True
+                    )
+                    await cl.Message(
+                        content=f"An error occurred during answer evaluation: {e}"
+                    ).send()
+                    return
 
             else:
                 logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
