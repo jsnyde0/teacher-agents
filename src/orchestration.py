@@ -782,6 +782,9 @@ async def handle_message(
                 user_message=user_message,
             )
 
+            # --> Log the raw evaluation result <---
+            logger.info(f"Step Evaluator raw result: {evaluation}")
+
             # Delegate to helper based on evaluation result
             if evaluation == "PROCEED":
                 reply_message, updates = await _handle_teaching_proceed(
