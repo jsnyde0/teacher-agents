@@ -53,7 +53,7 @@ if __name__ == "__main__":
     else:
         # Configure OpenRouter
         openrouter_model = OpenAIModel(
-            "google/gemini-flash-1.5",
+            "google/gemini-2.0-flash-lite-001",
             provider=OpenAIProvider(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=OPENROUTER_API_KEY,

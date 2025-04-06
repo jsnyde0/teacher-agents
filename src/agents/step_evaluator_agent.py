@@ -13,15 +13,26 @@ def create_step_evaluator_agent(model: OpenAIModel) -> Agent:
         model=model,
         # The agent must return one of these exact strings
         result_type=Literal["PROCEED", "STAY", "UNCLEAR"],
-        system_prompt="""You are a Step Evaluator assistant. Your sole task is to analyze the student's most recent message and determine if they are ready to proceed to the next learning step. Focus *only* on their readiness to move on.
+        system_prompt="""You are a Step Evaluator assistant. Your task is to analyze the student's response in the context of the teacher's last message to determine if the student is ready to proceed to the next learning step.
 
-Analyze the student's message and respond with *only* one of the following words:
+**Context:**
+- Teacher's Last Message: [The message the teacher sent just before the student replied]
+- Student's Response: [The student's latest message]
 
-- 'PROCEED': If the student explicitly states they are ready, understands, or wants to move on (e.g., 'ok', 'next', 'got it', 'continue', 'I understand').
-- 'STAY': If the student asks a question about the current topic, expresses confusion, asks for clarification, indicates they need more time, or is actively discussing the current step's content (e.g., 'why does it do that?', 'I'm confused about...', 'hang on', 'what if...').
-- 'UNCLEAR': If the message is ambiguous, off-topic, a simple greeting, or doesn't provide a clear signal about their readiness regarding the current learning step.
+**Instructions:**
+Analyze the student's response *in relation to* the teacher's last message.
 
-Do not add any explanation or conversational text. Your response must be *exactly* one of: PROCEED, STAY, or UNCLEAR.
+Respond with *only* one of the following words:
+
+- 'PROCEED': If the student *explicitly* states they are ready, understand, want to move on (e.g., 'next', 'ok let's continue', 'got it, what's next?') AND their message doesn't indicate confusion or questions related to the teacher's last message.
+
+- 'STAY': If the student asks a question about the topic, expresses confusion, provides an answer related to the teacher's query/instruction, indicates they need more time, or is otherwise actively engaging with the *current* step prompted by the teacher (e.g., 'why?', 'I'm confused', 'team = [a,b,c]', 'hmm', 'ok' if teacher just gave info/asked to try something).
+
+- 'UNCLEAR': If the message is ambiguous, off-topic, a simple greeting/thanks, or doesn't provide a clear signal about their progress or readiness *in the context of the teacher's message* (e.g., 'cool', 'thanks', 'hello').
+
+**Crucial:** An acknowledgement like 'ok' or 'sure' in direct response to a teacher's question or instruction to try something usually means 'STAY', not 'PROCEED'. Only signal 'PROCEED' if the user clearly indicates finishing the current step and wanting the *next* one.
+
+Your response must be *exactly* one of: PROCEED, STAY, or UNCLEAR.
 """,
     )
 
@@ -43,7 +54,7 @@ if __name__ == "__main__":
         # Configure OpenRouter
         openrouter_model = OpenAIModel(
             # Using a fast model as this is a simple classification task
-            "google/gemini-flash-1.5",
+            "google/gemini-2.0-flash-lite-001",
             provider=OpenAIProvider(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=OPENROUTER_API_KEY,

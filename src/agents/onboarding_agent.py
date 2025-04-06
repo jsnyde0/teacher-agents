@@ -33,14 +33,10 @@ def create_onboarding_agent(model: OpenAIModel) -> Agent:
             "current knowledge (Point A), their learning goal (Point B), and \
                 their learning preferences. "
             "Engage in a natural conversation to gather this information. "
-            "Ask clarifying questions one at a time if information is missing. "
+            "Ask clarifying questions one at a time ONLY if information for Point A, Point B, or Preferences is clearly missing or ambiguous. "
             "Check the conversation history to avoid repeating questions. "
-            "Once you are confident you have gathered all three pieces of \
-                information (Point A, Point B, Preferences), "
-            "respond *only* with the structured OnboardingData object. Do not \
-                include any conversational text in the final structured response. "
-            "Otherwise, respond with a conversational question or statement as \
-                a string."
+            "**CRITICAL: Once you are confident you have gathered reasonable answers for all three pieces of information (Point A, Point B, Preferences), you MUST stop asking questions and respond *only* with the structured OnboardingData object.** Do not ask for further details or refinements if you already have the core information. Do not include any conversational text in the final structured response. "
+            "If you still need information for Point A, B, or Preferences, respond with a conversational question as a string."
         ),
     )
 
@@ -60,7 +56,7 @@ if __name__ == "__main__":
     else:
         # Configure OpenRouter
         openrouter_model = OpenAIModel(
-            "google/gemini-flash-1.5",  # Updated model
+            "google/gemini-2.0-flash-lite-001",  # Updated model
             provider=OpenAIProvider(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=OPENROUTER_API_KEY,

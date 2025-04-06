@@ -82,6 +82,7 @@ async def on_chat_start():
     cl.user_session.set("learning_plan", None)
     cl.user_session.set("current_step_index", -1)
     cl.user_session.set("current_stage", "onboarding")  # Track current flow stage
+    cl.user_session.set("last_teacher_message", None)  # Add last_teacher_message state
 
     await cl.Message(
         content="Hello! I'm here to help onboard you. To start, could you tell \
@@ -153,17 +154,20 @@ async def run_journey_crafter(
 
 
 # --> Add Helper Function for Teacher Agent <---
-async def run_teacher_for_current_step(is_follow_up: bool = False) -> str:
+async def run_teacher_for_current_step(
+    is_follow_up: bool = False, last_user_message: str | None = None
+) -> str:
     """Runs the Teacher Agent for the current step and returns the message.
 
     Args:
         is_follow_up: If True, use a prompt designed for re-engaging the student
-                      on the same step after a STAY signal.
+                      on the same step after a STAY/UNCLEAR signal.
+        last_user_message: The student's previous message content, used when is_follow_up is True.
+
     Returns:
         The teaching message string or an error message.
     """
     teacher_agent: Agent = cl.user_session.get("teacher_agent")
-    # --> Comment out unused history variable <---
     # history: List[ModelMessage] = cl.user_session.get("message_history") # Not using history for teacher yet
     learning_plan: List[str] = cl.user_session.get("learning_plan")
     current_step_index: int = cl.user_session.get("current_step_index")
@@ -192,26 +196,40 @@ async def run_teacher_for_current_step(is_follow_up: bool = False) -> str:
         input_prompt = (
             f"Start teaching the student according to these instructions:\\n\\n"
             f"Pedagogical Guideline: {guideline_str}\\n"
-            f"Current Learning Step: {current_step_description}"
-            # Note: We don't provide the full plan or index to the teacher agent itself
-            # It only needs to focus on generating the output for the *current* step.
+            f"Current Learning Step: {current_step_description}\\n\\n"
+            f"Introduce this step and immediately provide the first piece of instruction, "
+            f"an example, or a guiding question about the topic itself to encourage engagement. "
+            f"Do NOT ask generic readiness questions like 'Are you ready?'."
         )
         logger.info(
             f"Running Teacher Agent for step {current_step_index} (initial prompt)."
         )
     else:
-        # Follow-up prompt after a STAY signal
+        # Follow-up prompt after a STAY/UNCLEAR signal, including user's last message
+        if last_user_message is None:
+            # Fallback if message is somehow missing, though it shouldn't be
+            logger.warning(
+                f"Teacher follow-up called for step {current_step_index} without last_user_message."
+            )
+            last_user_message = "[Student message not available]"
+
         input_prompt = (
-            f"The student seems to need more time or has questions about the current learning step.\\n"
+            f"The student needs to stay on the current learning step:\\n"
             f"Current Learning Step: {current_step_description}\\n"
-            f"Pedagogical Guideline: {guideline_str}\\n\\n"
-            f"Your Task: Re-engage the student on this *same* step. Do NOT simply repeat the initial introduction. "
-            f"Instead, try one of the following based on the guideline: "
-            f"ask a different clarifying question, provide a simpler example, offer a focused explanation, "
-            f"or gently prompt them to share their thoughts or current attempt. Keep the tone encouraging."
+            f"Pedagogical Guideline: {guideline_str}\\n"
+            f"Student's Last Message: '{last_user_message}'\\n\\n"
+            f"Your **Primary Task** is to evaluate the student's 'Last Message' in response to the 'Current Learning Step'. "
+            f"You MUST determine if the response is correct, incorrect, or partially correct. Then, you MUST respond following the 'Pedagogical Guideline'.\\n\\n"
+            f"1.  **Evaluate Correctness:** Determine if 'Student's Last Message' is a correct/relevant response to the 'Current Learning Step' context.\\n"
+            f"2.  **Formulate Response based on Guideline:**\\n"
+            f"    - **If Incorrect/Partially Correct:** State that the response isn't quite right and *specifically explain the error*. Then, provide a concise correction, hint, example, or question *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n"
+            f"    - **If Correct:** Acknowledge the correct answer briefly and positively. Then, proceed with the next logical explanation, example, or question *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n"
+            f"    - **If Unclear/Question:** Address the question or confusion directly, *strictly following the style* dictated by the 'Pedagogical Guideline'.\\n\\n"
+            f"**CRITICAL:** The delivery style (e.g., Socratic questioning, examples first, direct explanation) of your entire response MUST adhere to the 'Pedagogical Guideline'. "
+            f"Do NOT simply repeat the initial introduction for this step."
         )
         logger.info(
-            f"Running Teacher Agent for step {current_step_index} (follow-up prompt)."
+            f"Running Teacher Agent for step {current_step_index} (follow-up prompt responding to: '{last_user_message[:50]}...')."
         )
 
     # --- Run agent ---
@@ -314,6 +332,8 @@ async def on_message(message: cl.Message):
                         ).send()
                         # --- Trigger Teacher for Step 0 ---
                         teaching_message = await run_teacher_for_current_step()
+                        # --> Store the teacher message <---
+                        cl.user_session.set("last_teacher_message", teaching_message)
                         await cl.Message(content=teaching_message).send()
                     else:  # JCA Error
                         logger.error(f"JCA failed: {plan_result}")
@@ -361,6 +381,9 @@ async def on_message(message: cl.Message):
         )
         # --> Retrieve Step Evaluator Agent from session <---
         step_evaluator_agent: Agent = cl.user_session.get("step_evaluator_agent")
+        # --> Retrieve last teacher message from session <---
+        last_teacher_message: str | None = cl.user_session.get("last_teacher_message")
+
         # Use Step Evaluator to decide next action
         if not step_evaluator_agent:
             logger.error("Step Evaluator Agent not found in session.")
@@ -370,10 +393,19 @@ async def on_message(message: cl.Message):
             cl.user_session.set("current_stage", "complete")
             return
 
+        # --> Format prompt for evaluator with context <---
+        evaluator_input_prompt = (
+            f"Teacher's Last Message: {last_teacher_message or '(No previous teacher message)'}\\n"
+            f"Student's Response: {message.content}"
+        )
+
         try:
-            eval_result = await step_evaluator_agent.run(message.content)
+            # --> Run evaluator with the combined prompt <---
+            eval_result = await step_evaluator_agent.run(evaluator_input_prompt)
             evaluation = eval_result.data
-            logger.info(f"Step Evaluator result: {evaluation}")
+            logger.info(
+                f"Step Evaluator context: [Teacher: '{last_teacher_message}', Student: '{message.content}'] -> Result: {evaluation}"
+            )  # Improved logging
 
             if evaluation == "PROCEED":
                 current_index = cl.user_session.get("current_step_index")
@@ -387,6 +419,8 @@ async def on_message(message: cl.Message):
                         content="Great! Let's move to the next step."
                     ).send()
                     teaching_message = await run_teacher_for_current_step()
+                    # --> Store the teacher message <---
+                    cl.user_session.set("last_teacher_message", teaching_message)
                     await cl.Message(content=teaching_message).send()
                 else:
                     logger.info("Learning plan complete.")
@@ -395,23 +429,15 @@ async def on_message(message: cl.Message):
                     ).send()
                     cl.user_session.set("current_stage", "complete")
 
-            elif evaluation == "STAY":
-                logger.info(
-                    "Student indicates STAY. Re-running teacher for current step."
+            elif evaluation == "STAY" or evaluation == "UNCLEAR":
+                log_level = "STAY" if evaluation == "STAY" else "UNCLEAR"
+                logger.info(f"Student indicates {log_level}. Responding contextually.")
+                teaching_message = await run_teacher_for_current_step(
+                    is_follow_up=True, last_user_message=message.content
                 )
-                # Send acknowledgement and re-run teacher for the *same* step
-                await cl.Message(
-                    content="Okay, seems like you're still working on this or have questions."
-                ).send()
-                teaching_message = await run_teacher_for_current_step(is_follow_up=True)
+                # --> Store the teacher message <---
+                cl.user_session.set("last_teacher_message", teaching_message)
                 await cl.Message(content=teaching_message).send()
-
-            elif evaluation == "UNCLEAR":
-                logger.info("Student readiness UNCLEAR.")
-                # Ask for clarification
-                await cl.Message(
-                    content="I couldn't quite tell if you're ready to proceed. Please let me know if you have questions, or say 'next' when you're ready to continue."
-                ).send()
 
             else:
                 logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
