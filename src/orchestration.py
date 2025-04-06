@@ -339,10 +339,344 @@ async def run_teaching_step(
     last_user_message: str | None = None,
     answer_evaluation: AnswerEvaluationResult | None = None,
 ) -> Union[str, None]:
-    """Runs the teacher agent for a specific step (initial or follow-up)."""
-    # Logic from run_teacher_for_current_step
-    # Returns the teacher's message string or None on error.
-    pass
+    """Runs the teacher agent for a specific step (initial or follow-up).
+
+    Args:
+        teacher_agent: The initialized Teacher agent instance.
+        guidelines: The pedagogical guidelines for the session.
+        learning_plan_steps: The list of steps in the learning plan.
+        current_step_index: The index of the current learning step.
+        is_follow_up: True if this is a follow-up after STAY/UNCLEAR, False otherwise.
+        last_user_message: The student's last message (required if is_follow_up=True).
+        answer_evaluation: The result from the Answer Evaluator (required if is_follow_up=True).
+
+    Returns:
+        The teacher's message string or None on error.
+    """
+    # --- Input Validation --- #
+    if not teacher_agent:
+        logger.error("Teacher agent instance not provided.")
+        return None
+    if not guidelines:
+        logger.error("Pedagogical guidelines not provided.")
+        return None
+    if not learning_plan_steps or not (
+        0 <= current_step_index < len(learning_plan_steps)
+    ):
+        logger.error(
+            f"Invalid learning plan or step index for Teacher. Index: {current_step_index}, Plan length: {len(learning_plan_steps) if learning_plan_steps else 0}"
+        )
+        return None
+    if is_follow_up and (last_user_message is None or answer_evaluation is None):
+        logger.error(
+            f"Teacher follow-up called for step {current_step_index} without required context (message or evaluation)."
+        )
+        return None  # Indicate error
+
+    # --- Prepare Context --- #
+    current_step_description = learning_plan_steps[current_step_index]
+    guideline_str = guidelines.guideline
+
+    # --- Construct Prompt --- #
+    if not is_follow_up:
+        # Standard prompt for introducing a step
+        input_prompt = (
+            f"Start teaching the student according to these instructions:\\n\\n"
+            f"Pedagogical Guideline: {guideline_str}\\n"
+            f"Current Learning Step: {current_step_description}\\n\\n"
+            f"Introduce this step and immediately provide the first piece of instruction, "
+            f"an example, or a guiding question about the topic itself to encourage engagement. "
+            f"Do NOT ask generic readiness questions like 'Are you ready?'."
+        )
+        logger.info(
+            f"Running Teacher Agent for step {current_step_index} (initial prompt)."
+        )
+    else:
+        # Follow-up prompt incorporating Answer Evaluation
+        # answer_evaluation is guaranteed to exist here due to validation above
+        input_prompt = f"""**CONTEXT:**
+- Current Learning Step Goal: {current_step_description}
+- Pedagogical Guideline: {guideline_str}
+- Student's Last Message: '{last_user_message}'
+- Answer Evaluation: {answer_evaluation.evaluation} (Explanation: {answer_evaluation.explanation})
+
+**Your Task:** Respond conversationally to the 'Student's Last Message' about the 'Current Learning Step Goal'. Your response MUST incorporate the 'Answer Evaluation' and strictly adhere to the 'Pedagogical Guideline'.
+
+1.  **Acknowledge/Feedback:** Briefly acknowledge the student's message, incorporating the provided 'Answer Evaluation' and 'Explanation' naturally into your feedback (e.g., "That's correct because...", "Not quite, the evaluation noted that...", "That's a good question...").
+2.  **Guideline-Driven Next Step:** Based on the evaluation and the 'Pedagogical Guideline', provide the *next* small piece of instruction, a clarifying question, a hint, or an example to continue the learning process for the *current* step. The *style* (e.g., Socratic, examples first) MUST match the Guideline.
+
+**IMPORTANT:** Do NOT use step markers. Generate a single, natural conversational response. Do NOT repeat the initial introduction for this step."""
+
+        logger.info(
+            f"Running Teacher Agent for step {current_step_index} (follow-up prompt responding to: '{last_user_message[:50]}...' with evaluation: {answer_evaluation.evaluation})"
+        )
+
+    # --- Run Agent --- #
+    try:
+        result = await teacher_agent.run(input_prompt)  # Run without history for now
+        if isinstance(result.data, str):
+            logger.info(f"Teacher Agent successful for step {current_step_index}.")
+            return result.data
+        else:
+            logger.error(
+                f"Teacher Agent returned unexpected data type: {type(result.data)}"
+            )
+            return None  # Indicate error
+    except Exception as e:
+        logger.error(f"Error running Teacher Agent: {e}", exc_info=True)
+        return None  # Indicate error
+
+
+# --- Control Flow Orchestration --- #
+async def handle_message(
+    session_state: SessionState, user_message: str
+) -> Tuple[str, SessionState]:
+    """Handles a user message based on the current session state.
+
+    This is the main entry point for processing a message after agents are initialized.
+    It determines the current stage, calls the appropriate lower-level
+    orchestration functions, updates the state, and returns the user reply.
+
+    Args:
+        session_state: The current state dictionary for the session.
+        user_message: The message received from the user.
+
+    Returns:
+        A tuple containing:
+        - The reply message string to be sent to the user.
+        - The *new*, updated session state dictionary.
+    """
+    # 1. Deep copy the input state to avoid modifying the original dict directly
+    #    until the end. This makes state updates cleaner.
+    current_state = session_state.copy()
+
+    # 2. Get necessary info from current state
+    current_stage = current_state.get("current_stage", "onboarding")
+    agents = current_state.get("agents", {})
+    message_history = current_state.get("message_history", [])
+    reply_message = "An error occurred processing your message."  # Default error reply
+
+    logger.info(f"Handling message for stage: {current_stage}")
+
+    # --- Onboarding Stage --- #
+    if current_stage == "onboarding":
+        onboarding_agent = agents.get("onboarding_agent")
+        if not onboarding_agent:
+            logger.error("Onboarding Agent not found in state.")
+            reply_message = "Error: Onboarding agent missing."
+            current_state["current_stage"] = "error"
+        else:
+            oa_result, updated_history = await run_onboarding_step(
+                onboarding_agent=onboarding_agent,
+                user_message=user_message,
+                message_history=message_history,
+            )
+            current_state["message_history"] = updated_history
+
+            if isinstance(oa_result, OnboardingData):
+                logger.info("Onboarding complete. Running post-onboarding pipeline...")
+                current_state["onboarding_data"] = oa_result
+                pma_agent = agents.get("pedagogical_master_agent")
+                jca_agent = agents.get("journey_crafter_agent")
+
+                if not pma_agent or not jca_agent:
+                    logger.error("PMA or JCA agent missing.")
+                    reply_message = "Error: Planning agents not available."
+                    current_state["current_stage"] = "error"
+                else:
+                    (
+                        guidelines,
+                        plan_steps,
+                        final_history,
+                        pipeline_error,
+                    ) = await run_post_onboarding_pipeline(
+                        pma_agent=pma_agent,
+                        jca_agent=jca_agent,
+                        onboarding_data=oa_result,
+                        message_history=updated_history,
+                    )
+                    current_state["message_history"] = final_history
+
+                    if pipeline_error:
+                        logger.error(f"Pipeline failed: {pipeline_error}")
+                        reply_message = (
+                            f"Sorry, I couldn't complete the planning: {pipeline_error}"
+                        )
+                        current_state["current_stage"] = "error"
+                    elif guidelines and plan_steps:
+                        logger.info("Pipeline successful. Moving to teaching.")
+                        current_state["pedagogical_guidelines"] = guidelines
+                        current_state["learning_plan"] = plan_steps
+                        current_state["current_step_index"] = 0
+                        current_state["current_stage"] = "teaching"
+
+                        # Trigger Teacher for Step 0
+                        teacher_agent = agents.get("teacher_agent")
+                        initial_teaching_message = await run_teaching_step(
+                            teacher_agent=teacher_agent,
+                            guidelines=guidelines,
+                            learning_plan_steps=plan_steps,
+                            current_step_index=0,
+                            is_follow_up=False,
+                        )
+
+                        if initial_teaching_message:
+                            current_state["last_teacher_message"] = (
+                                initial_teaching_message
+                            )
+                            reply_message = (
+                                f"**Guideline:** {guidelines.guideline}\\n\\n"
+                                f"**Learning Plan:**\\n"
+                                + "\\n".join([f"- {s}" for s in plan_steps])
+                                + f"\\n\\nLet's start with the first step!\\n\\n---\\n\\n{initial_teaching_message}"
+                            )
+                        else:
+                            logger.error("Failed to get initial teaching message.")
+                            reply_message = "Planning complete, but failed to prepare the first teaching step."
+                            current_state["current_stage"] = "error"
+                    else:
+                        logger.error("Pipeline returned unexpected state.")
+                        reply_message = (
+                            "Sorry, an unexpected error occurred during planning."
+                        )
+                        current_state["current_stage"] = "error"
+
+            elif isinstance(oa_result, str):
+                logger.info("Onboarding agent needs more info.")
+                reply_message = oa_result
+                # Stage remains 'onboarding'
+            else:  # Onboarding failed (returned None)
+                logger.error("Onboarding step failed.")
+                reply_message = "Sorry, something went wrong during onboarding."
+                current_state["current_stage"] = "error"
+
+    # --- Teaching Stage --- #
+    elif current_stage == "teaching":
+        step_evaluator_agent = agents.get("step_evaluator_agent")
+        last_teacher_message = current_state.get("last_teacher_message")
+        learning_plan_steps = current_state.get("learning_plan")
+        current_step_index = current_state.get("current_step_index", -1)
+        guidelines = current_state.get("pedagogical_guidelines")
+        teacher_agent = agents.get("teacher_agent")
+
+        # Check for required data for teaching stage
+        if (
+            not step_evaluator_agent
+            or not learning_plan_steps
+            or current_step_index < 0
+            or not guidelines
+            or not teacher_agent
+        ):
+            logger.error("Missing required data/agents for teaching stage.")
+            reply_message = "Error: Session state is incomplete for teaching."
+            current_state["current_stage"] = "error"
+        else:
+            evaluation = await run_step_evaluation(
+                step_evaluator_agent=step_evaluator_agent,
+                last_teacher_message=last_teacher_message,
+                user_message=user_message,
+            )
+
+            if evaluation is None:
+                logger.error("Step Evaluation failed.")
+                reply_message = "Sorry, I had trouble evaluating your progress."
+                # Keep current stage? Or set to error? For now, just reply.
+            elif evaluation == "PROCEED":
+                next_index = current_step_index + 1
+                current_state["current_step_index"] = next_index
+
+                if next_index < len(learning_plan_steps):
+                    logger.info(f"Proceeding to step {next_index}")
+                    teaching_message = await run_teaching_step(
+                        teacher_agent=teacher_agent,
+                        guidelines=guidelines,
+                        learning_plan_steps=learning_plan_steps,
+                        current_step_index=next_index,
+                        is_follow_up=False,
+                    )
+                    if teaching_message:
+                        reply_message = f"Great! Let's move to the next step.\n\n---\\n\n{teaching_message}"
+                        current_state["last_teacher_message"] = teaching_message
+                    else:
+                        logger.error(
+                            f"Failed to get teaching message for step {next_index}."
+                        )
+                        reply_message = "Ok, moving to the next step, but I couldn't prepare the content."
+                        current_state["current_stage"] = "error"
+                else:
+                    logger.info("Learning plan complete.")
+                    reply_message = (
+                        "Congratulations! You've completed the learning plan."
+                    )
+                    current_state["current_stage"] = "complete"
+
+            elif evaluation == "STAY" or evaluation == "UNCLEAR":
+                logger.info(f"Eval = {evaluation}. Running Answer Evaluator.")
+                answer_evaluator_agent = agents.get("answer_evaluator_agent")
+                if not answer_evaluator_agent:
+                    logger.error("Answer Evaluator agent missing.")
+                    reply_message = "Error: Cannot evaluate answer context."
+                    current_state["current_stage"] = "error"
+                else:
+                    answer_evaluation = await run_answer_evaluation(
+                        answer_evaluator_agent=answer_evaluator_agent,
+                        learning_plan_steps=learning_plan_steps,
+                        current_step_index=current_step_index,
+                        last_teacher_message=last_teacher_message,
+                        user_message=user_message,
+                    )
+                    if answer_evaluation is None:
+                        logger.error("Answer Evaluation failed.")
+                        reply_message = "Sorry, I had trouble evaluating your answer."
+                        # Keep stage or set error?
+                    else:
+                        teaching_message = await run_teaching_step(
+                            teacher_agent=teacher_agent,
+                            guidelines=guidelines,
+                            learning_plan_steps=learning_plan_steps,
+                            current_step_index=current_step_index,
+                            is_follow_up=True,
+                            last_user_message=user_message,
+                            answer_evaluation=answer_evaluation,
+                        )
+                        if teaching_message:
+                            reply_message = teaching_message
+                            current_state["last_teacher_message"] = teaching_message
+                        else:
+                            logger.error("Failed to get teaching follow-up message.")
+                            reply_message = (
+                                "Sorry, I couldn't prepare the follow-up message."
+                            )
+                            current_state["current_stage"] = "error"
+            else:  # Should not happen
+                logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
+                reply_message = "Sorry, I had trouble processing the evaluation."
+                current_state["current_stage"] = "error"
+
+    # --- Complete Stage --- #
+    elif current_stage == "complete":
+        logger.info("Handling message in complete stage.")
+        reply_message = "Our current learning session is complete. Feel free to start a new chat to learn something else!"
+        # Stage remains 'complete'
+
+    # --- Error / Unexpected Stage --- #
+    else:
+        # This case handles stages like 'error' or any other unexpected value
+        if current_stage != "error":  # Avoid logging the same error repeatedly
+            logger.error(f"Reached unexpected stage in handle_message: {current_stage}")
+        reply_message = (
+            "Sorry, an unexpected error occurred. Please try starting a new chat."
+        )
+        current_state["current_stage"] = "error"  # Ensure stage is error
+
+    # Message history is updated within the called functions (onboarding, pipeline)
+    # If teaching stage needs history updates, it should be added there.
+
+    # 4. Return the final reply and the *modified* current_state dictionary
+    logger.info(
+        f"handle_message complete. New stage: {current_state.get('current_stage')}"
+    )
+    return reply_message, current_state
 
 
 # Additional helper functions might be needed for state updates or prompt formatting.
