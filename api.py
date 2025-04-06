@@ -1,4 +1,5 @@
 # api.py
+import asyncio
 import os
 from typing import Any, Dict, List
 
@@ -179,7 +180,7 @@ async def run_pedagogical_master_api(
     session_state: Dict[str, Any], onboarding_data: OnboardingData
 ) -> PedagogicalGuidelines | str:
     """Runs the PMA using the agent instance from session_state."""
-    print(f"\n=== Running Pedagogical Master Agent ===")
+    print("\n=== Running Pedagogical Master Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
     
     pma = session_state.get("pedagogical_master_agent")
@@ -226,7 +227,7 @@ async def run_journey_crafter_api(
     guidelines: PedagogicalGuidelines,
 ) -> LearningPlan | str:
     """Runs the JCA using the agent instance from session_state."""
-    print(f"\n=== Running Journey Crafter Agent ===")
+    print("\n=== Running Journey Crafter Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
     
     jca = session_state.get("journey_crafter_agent")
@@ -277,7 +278,7 @@ async def run_teacher_agent_api(
     session_state: Dict[str, Any], user_message: str
 ) -> TeacherResponse | str:
     """Runs the Teacher Agent using the agent instance from session_state."""
-    print(f"\n=== Running Teacher Agent ===")
+    print("\n=== Running Teacher Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
     print(f"User message: {user_message}")
     
@@ -360,7 +361,7 @@ async def run_teacher_agent_api(
                     print(f"Error attributes: {retry_e.__dict__}")
                 if attempt == max_retries - 1:
                     raise
-                print(f"Waiting 1 second before retry...")
+                print("Waiting 1 second before retry...")
                 await asyncio.sleep(1)  # Short delay between retries
     except Exception as e:
         error_msg = f"Teacher Agent Error during execution: {str(e)}"
@@ -624,7 +625,7 @@ async def chat_endpoint(request: ChatMessageRequest):
     Main endpoint to handle user messages. Requires a session_id.
     Manages conversation state based on the session_id.
     """
-    print(f"\n=== Received chat request ===")
+    print("\n=== Received chat request ===")
     print(f"Session ID: {request.session_id}")
     print(f"Message length: {len(request.message)}")
     
