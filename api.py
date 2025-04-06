@@ -36,9 +36,9 @@ print("Starting API initialization...")
 load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# Updated model selection with larger context window 
+# Updated model selection with larger context window
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-MODEL_NAME = "anthropic/claude-3-opus-20240229" # 200K token window
+MODEL_NAME = "anthropic/claude-3-opus-20240229"  # 200K token window
 
 print(f"Environment loaded - API Key present: {bool(OPENROUTER_API_KEY)}")
 print(f"Using model: {MODEL_NAME}")
@@ -91,7 +91,7 @@ class ChatMessageResponse(BaseModel):
 def initialize_session_state(session_id: str):
     """Initializes agents and state for a new session."""
     print(f"\n=== Initializing new session: {session_id} ===")
-    
+
     if session_id in sessions:
         print(f"Session {session_id} already exists - skipping initialization")
         return
@@ -175,6 +175,7 @@ def initialize_session_state(session_id: str):
         print(f"Created error state for session {session_id}")
         print("=== Session initialization failed ===\n")
 
+
 # Define async helper functions for running agents, mirroring app_chainlit.py
 async def run_pedagogical_master_api(
     session_state: Dict[str, Any], onboarding_data: OnboardingData
@@ -182,7 +183,7 @@ async def run_pedagogical_master_api(
     """Runs the PMA using the agent instance from session_state."""
     print("\n=== Running Pedagogical Master Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
-    
+
     pma = session_state.get("pedagogical_master_agent")
     if not pma:
         print("ERROR: Pedagogical Master Agent not found in session state")
@@ -192,18 +193,18 @@ async def run_pedagogical_master_api(
     print(f"- Point A: {onboarding_data.point_a}")
     print(f"- Point B: {onboarding_data.point_b}")
     print(f"- Preferences: {onboarding_data.preferences}")
-    
+
     pma_input_prompt = (
         f"Determine pedagogical guidelines based on the following student profile:\n"
         f"Current Knowledge (Point A): {onboarding_data.point_a}\n"
         f"Learning Goal (Point B): {onboarding_data.point_b}\n"
         f"Learning Preferences: {onboarding_data.preferences}"
     )
-    
+
     try:
         print("Executing PMA...")
         pma_result = await pma.run(pma_input_prompt)
-        
+
         if isinstance(pma_result.data, PedagogicalGuidelines):
             print("PMA execution successful")
             print(f"Generated guideline: {pma_result.data.guideline}")
@@ -229,7 +230,7 @@ async def run_journey_crafter_api(
     """Runs the JCA using the agent instance from session_state."""
     print("\n=== Running Journey Crafter Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
-    
+
     jca = session_state.get("journey_crafter_agent")
     if not jca:
         print("ERROR: Journey Crafter Agent not found in session state")
@@ -240,7 +241,7 @@ async def run_journey_crafter_api(
     print(f"- Point B: {onboarding_data.point_b}")
     print(f"- Preferences: {onboarding_data.preferences}")
     print(f"- Guidelines: {guidelines.guideline}")
-    
+
     jca_input_prompt = (
         f"Create a learning plan based on the following profile and guidelines:\n\n"
         f"**Student Profile:**\n"
@@ -249,11 +250,11 @@ async def run_journey_crafter_api(
         f"- Learning Preferences: {onboarding_data.preferences}\n\n"
         f"**Pedagogical Guideline:** {guidelines.guideline}"
     )
-    
+
     try:
         print("Executing JCA...")
         jca_result = await jca.run(jca_input_prompt)
-        
+
         if isinstance(jca_result.data, LearningPlan):
             print("JCA execution successful")
             print(f"Generated {len(jca_result.data.steps)} learning steps")
@@ -281,7 +282,7 @@ async def run_teacher_agent_api(
     print("\n=== Running Teacher Agent ===")
     print(f"Session ID: {session_state.get('session_id', 'N/A')}")
     print(f"User message: {user_message}")
-    
+
     teacher = session_state.get("teacher_agent")
     if not teacher:
         print("ERROR: Teacher Agent not found in session state")
@@ -299,51 +300,59 @@ async def run_teacher_agent_api(
         print(f"- Guidelines present: {bool(guidelines)}")
         print(f"- Learning plan present: {bool(learning_plan)}")
         return "Error: Missing required data for Teacher Agent."
-    
+
     print(f"Current step: {current_step_index + 1} of {len(learning_plan.steps)}")
     print("Preparing teacher input...")
-    
+
     # Prepare the input for the teacher agent
     teacher_input = prepare_teacher_input(
         onboarding_data, guidelines, learning_plan, current_step_index, user_message
     )
-    
+
     # Print input details for debugging
     print(f"Teacher input - Length: {len(teacher_input)}")
     print(f"Current step content: {learning_plan.steps[current_step_index]}")
-    print(f"Input contains onboarding data: {'point_a' in teacher_input and 'point_b' in teacher_input}")
+    print(
+        f"Input contains onboarding data: {'point_a' in teacher_input and 'point_b' in teacher_input}"
+    )
     print(f"Input contains guidelines: {guidelines.guideline[:50] in teacher_input}")
-    
+
     try:
         print("Executing Teacher Agent...")
         # Add retry logic for empty responses
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                print(f"Attempt {attempt+1} of {max_retries}")
+                print(f"Attempt {attempt + 1} of {max_retries}")
                 teacher_result = await teacher.run(teacher_input)
-                
+
                 # Log detailed result information
                 print(f"Teacher result type: {type(teacher_result)}")
                 print(f"Has data attribute: {hasattr(teacher_result, 'data')}")
-                if hasattr(teacher_result, 'data'):
-                    print(f"Result data type: {type(teacher_result.data) if teacher_result.data else 'None'}")
-                
+                if hasattr(teacher_result, "data"):
+                    print(
+                        f"Result data type: {type(teacher_result.data) if teacher_result.data else 'None'}"
+                    )
+
                 # Check for empty response
                 if teacher_result is None:
-                    print(f"ERROR: Teacher result is None on attempt {attempt+1}")
+                    print(f"ERROR: Teacher result is None on attempt {attempt + 1}")
                     if attempt == max_retries - 1:
                         return "Error: Teacher Agent returned None response after multiple attempts."
                     continue
-                elif hasattr(teacher_result, 'data') and teacher_result.data is None:
-                    print(f"ERROR: Teacher result data is None on attempt {attempt+1}")
+                elif hasattr(teacher_result, "data") and teacher_result.data is None:
+                    print(
+                        f"ERROR: Teacher result data is None on attempt {attempt + 1}"
+                    )
                     if attempt == max_retries - 1:
                         return "Error: Teacher Agent returned result with None data after multiple attempts."
                     continue
-                    
+
                 if isinstance(teacher_result.data, TeacherResponse):
                     print("Teacher Agent execution successful")
-                    print(f"Response content length: {len(teacher_result.data.content)}")
+                    print(
+                        f"Response content length: {len(teacher_result.data.content)}"
+                    )
                     print(f"Step {teacher_result.data.current_step_index + 1}")
                     print(f"Step completed: {teacher_result.data.completed}")
                     print("=== Teacher Agent execution complete ===\n")
@@ -355,7 +364,7 @@ async def run_teacher_agent_api(
                     print("=== Teacher Agent execution failed ===\n")
                     return error_msg
             except Exception as retry_e:
-                print(f"Attempt {attempt+1} failed with error: {str(retry_e)}")
+                print(f"Attempt {attempt + 1} failed with error: {str(retry_e)}")
                 print(f"Error type: {type(retry_e)}")
                 if hasattr(retry_e, "__dict__"):
                     print(f"Error attributes: {retry_e.__dict__}")
@@ -377,7 +386,7 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
     """Processes the user message using the appropriate agent based on session state."""
     print(f"\n=== Processing message for session {session_id} ===")
     print(f"User message: {user_message}")
-    
+
     if session_id not in sessions:
         print(f"New session {session_id} - initializing state")
         initialize_session_state(session_id)
@@ -387,16 +396,26 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
 
     # Handle cases where initialization failed or session_state is None
     if not session_state or session_state.get("initialization_error"):
-        error_msg = session_state.get("initialization_error", "Session not initialized properly.") if session_state else "Session not found."
+        error_msg = (
+            session_state.get(
+                "initialization_error", "Session not initialized properly."
+            )
+            if session_state
+            else "Session not found."
+        )
         print(f"ERROR: {error_msg}")
-        return ChatMessageResponse(reply=f"Error: Cannot process message. {error_msg}", session_id=session_id, current_stage="error")
+        return ChatMessageResponse(
+            reply=f"Error: Cannot process message. {error_msg}",
+            session_id=session_id,
+            current_stage="error",
+        )
 
     current_stage = session_state.get("current_stage", "onboarding")
     print(f"Current stage: {current_stage}")
-    
+
     message_history: List[ModelMessage] = session_state.get("message_history", [])
     print(f"Message history length: {len(message_history)}")
-    
+
     # Add session_id to state for logging in helper functions if needed
     session_state["session_id"] = session_id
 
@@ -427,7 +446,9 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                 else:
                     # Add a note that we're moving to the next step
                     if learning_plan and current_step_index < len(learning_plan.steps):
-                        print(f"Moving to next step: {learning_plan.steps[current_step_index]}")
+                        print(
+                            f"Moving to next step: {learning_plan.steps[current_step_index]}"
+                        )
                         reply_message += f"\n\n**Moving to next step:** {learning_plan.steps[current_step_index]}"
         else:
             # Handle error from teacher agent
@@ -472,7 +493,9 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                     session_state["current_stage"] = "error"
             else:
                 print("ERROR: Learning plan not found")
-                reply_message = "Error: Learning plan not found. Cannot start teaching process."
+                reply_message = (
+                    "Error: Learning plan not found. Cannot start teaching process."
+                )
                 session_state["current_stage"] = "error"
         else:
             print("Waiting for user to start teaching")
@@ -559,9 +582,14 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                             session_state, onboarding_data, pma_result
                         )
                         if isinstance(jca_result, LearningPlan):
-                             print("JCA completed successfully")
-                             plan_steps_text = "\n".join([f"  {i + 1}. {step}" for i, step in enumerate(jca_result.steps)])
-                             reply_message = ( # Final reply with plan
+                            print("JCA completed successfully")
+                            plan_steps_text = "\n".join(
+                                [
+                                    f"  {i + 1}. {step}"
+                                    for i, step in enumerate(jca_result.steps)
+                                ]
+                            )
+                            reply_message = (  # Final reply with plan
                                 f"Great, thank you! Onboarding complete:\n"
                                 f"- **Point A:** {onboarding_data.point_a}\n"
                                 f"- **Point B:** {onboarding_data.point_b}\n"
@@ -570,16 +598,20 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                                 f"**Proposed Learning Plan:**\n{plan_steps_text}\n\n"
                                 f"*(Planning complete! Type 'start' to begin the teaching process.)*"
                             )
-                             session_state["learning_plan"] = jca_result # Store the plan
-                             session_state["current_stage"] = "complete" # Ready for teaching
-                        else: # JCA failed
+                            session_state["learning_plan"] = (
+                                jca_result  # Store the plan
+                            )
+                            session_state["current_stage"] = (
+                                "complete"  # Ready for teaching
+                            )
+                        else:  # JCA failed
                             print(f"ERROR from JCA: {jca_result}")
                             reply_message = f"Onboarding and guideline generation complete, but failed to create learning plan: {jca_result}"
-                            session_state["current_stage"] = "error" # Set error stage
-                    else: # PMA failed
-                         print(f"ERROR from PMA: {pma_result}")
-                         reply_message = f"Onboarding complete, but failed to determine pedagogical guidelines: {pma_result}"
-                         session_state["current_stage"] = "error" # Set error stage
+                            session_state["current_stage"] = "error"  # Set error stage
+                    else:  # PMA failed
+                        print(f"ERROR from PMA: {pma_result}")
+                        reply_message = f"Onboarding complete, but failed to determine pedagogical guidelines: {pma_result}"
+                        session_state["current_stage"] = "error"  # Set error stage
 
                 elif isinstance(oa_result.data, str):
                     print("Onboarding in progress - continuing conversation")
@@ -588,9 +620,11 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
                     # Keep stage as "onboarding"
                 else:
                     # Unexpected result from onboarding agent
-                     print(f"ERROR: Unexpected onboarding result type: {type(oa_result.data)}")
-                     reply_message = f"Error: Unexpected response type from Onboarding Agent: {type(oa_result.data)}"
-                     session_state["current_stage"] = "error"
+                    print(
+                        f"ERROR: Unexpected onboarding result type: {type(oa_result.data)}"
+                    )
+                    reply_message = f"Error: Unexpected response type from Onboarding Agent: {type(oa_result.data)}"
+                    session_state["current_stage"] = "error"
 
             except Exception as e:
                 print(f"ERROR during onboarding: {str(e)}")
@@ -601,9 +635,9 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
     # If it's still pedagogy/journey_crafting, it means something went wrong or is unexpected.
     # This case shouldn't normally be hit if OA always transitions or returns a string.
     elif current_stage in ["pedagogy", "journey_crafting"]:
-         print(f"ERROR: Unexpected stage '{current_stage}'")
-         reply_message = f"Error: Unexpected state '{current_stage}'. Processing should happen automatically after onboarding completes successfully."
-         session_state["current_stage"] = "error"
+        print(f"ERROR: Unexpected stage '{current_stage}'")
+        reply_message = f"Error: Unexpected state '{current_stage}'. Processing should happen automatically after onboarding completes successfully."
+        session_state["current_stage"] = "error"
 
     print(f"\nFinal stage: {session_state.get('current_stage')}")
     print(f"Updating session state for {session_id}")
@@ -628,7 +662,7 @@ async def chat_endpoint(request: ChatMessageRequest):
     print("\n=== Received chat request ===")
     print(f"Session ID: {request.session_id}")
     print(f"Message length: {len(request.message)}")
-    
+
     if not OPENROUTER_API_KEY:
         print("ERROR: OPENROUTER_API_KEY not configured")
         # Check moved to initialization, but keep a check here for robustness
@@ -671,7 +705,8 @@ async def health_check():
 # --- Running the App (for local development) ---
 if __name__ == "__main__":
     import uvicorn
+
     print("\n=== Starting FastAPI server ===")
     print(f"API Key Loaded: {bool(OPENROUTER_API_KEY)}")
     print("Starting server on http://0.0.0.0:8000")
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

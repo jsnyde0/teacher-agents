@@ -114,4 +114,4 @@ def prepare_teacher_input(
         f"**Student Message:** {user_message}\n\n"
         f"Provide the next appropriate teaching content for this step. If the student demonstrates "
         f"sufficient understanding of this step, indicate that it's completed."
-    ) 
+    )
