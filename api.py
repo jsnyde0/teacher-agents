@@ -79,6 +79,7 @@ class ChatMessageResponse(BaseModel):
     # e.g., pedagogical_guidelines: PedagogicalGuidelines | None = None
     # e.g., learning_plan: LearningPlan | None = None # Note: LearningPlan might be just steps list now
     learning_plan_steps: List[str] | None = None
+    current_step_index: int | None = None
 
 
 # --- Helper Functions ---
@@ -209,6 +210,7 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
         session_id=session_id,
         current_stage=new_session_state.get("current_stage"),
         learning_plan_steps=new_session_state.get("learning_plan"),
+        current_step_index=new_session_state.get("current_step_index"),
     )
 
     # --- Remove old stage-based logic from process_message --- #
