@@ -3,7 +3,7 @@
 # --> Add logging imports <---
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -78,6 +78,7 @@ class ChatMessageResponse(BaseModel):
     # e.g., onboarding_data: OnboardingData | None = None
     # e.g., pedagogical_guidelines: PedagogicalGuidelines | None = None
     # e.g., learning_plan: LearningPlan | None = None # Note: LearningPlan might be just steps list now
+    learning_plan_steps: List[str] | None = None
 
 
 # --- Helper Functions ---
@@ -207,6 +208,7 @@ async def process_message(session_id: str, user_message: str) -> ChatMessageResp
         reply=reply_message,
         session_id=session_id,
         current_stage=new_session_state.get("current_stage"),
+        learning_plan_steps=new_session_state.get("learning_plan"),
     )
 
     # --- Remove old stage-based logic from process_message --- #

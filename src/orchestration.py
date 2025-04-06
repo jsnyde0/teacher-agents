@@ -20,7 +20,7 @@ from .agents.answer_evaluator_agent import (
     AnswerEvaluationResult,
     create_answer_evaluator_agent,
 )
-from .agents.journey_crafter_agent import create_journey_crafter_agent
+from .agents.journey_crafter_agent import LearningPlan, create_journey_crafter_agent
 from .agents.onboarding_agent import OnboardingData, create_onboarding_agent
 from .agents.pedagogical_master_agent import (
     PedagogicalGuidelines,
@@ -520,15 +520,14 @@ async def handle_message(
                             is_follow_up=False,
                         )
 
+                        # Format the initial reply message WITHOUT the plan
                         if initial_teaching_message:
                             current_state["last_teacher_message"] = (
                                 initial_teaching_message
                             )
                             reply_message = (
                                 f"**Guideline:** {guidelines.guideline}\\n\\n"
-                                f"**Learning Plan:**\\n"
-                                + "\\n".join([f"- {s}" for s in plan_steps])
-                                + f"\\n\\nLet's start with the first step!\\n\\n---\\n\\n{initial_teaching_message}"
+                                f"Planning complete! Let's start with the first step.\\n\\n---\\n\\n{initial_teaching_message}"
                             )
                         else:
                             logger.error("Failed to get initial teaching message.")
@@ -630,6 +629,102 @@ async def handle_message(
                         reply_message = "Sorry, I had trouble evaluating your answer."
                         # Keep stage or set error?
                     else:
+                        # --> Add JCA Revision Logic <---
+                        should_revise_plan = answer_evaluation.evaluation in [
+                            "incorrect",
+                            "partial",
+                            "not_applicable",
+                        ]
+                        plan_revised_message = ""
+
+                        if should_revise_plan:
+                            logger.info(
+                                f"Answer evaluation ({answer_evaluation.evaluation}) suggests plan revision."
+                            )
+                            jca_agent = agents.get("journey_crafter_agent")
+                            onboarding_data = current_state.get("onboarding_data")
+                            pma_guidelines = current_state.get(
+                                "pedagogical_guidelines"
+                            )  # Use PMA guidelines
+                            current_plan = current_state.get("learning_plan", [])
+                            current_index = current_state.get("current_step_index", -1)
+                            history = current_state.get("message_history", [])
+
+                            if (
+                                jca_agent
+                                and onboarding_data
+                                and pma_guidelines
+                                and current_index >= 0
+                            ):
+                                current_step_desc = current_plan[current_index]
+                                remaining_steps = current_plan[current_index + 1 :]
+
+                                revision_prompt = (
+                                    f"The student is struggling with the step: '{current_step_desc}'.\n"
+                                    f"Their last message was: '{user_message}'.\n"
+                                    f"Evaluation of their response: {answer_evaluation.evaluation} - {answer_evaluation.explanation}\n"
+                                    f"The originally planned remaining steps were: {remaining_steps}\n"
+                                    f"Based on the student's difficulty and the evaluation, please revise or regenerate the plan for the *remaining* steps only (starting after the current struggling step). "
+                                    f"Consider breaking down future steps or adding prerequisites if needed. Adhere to the original goal and guidelines.\n"
+                                    f"Student Goal (Point B): {onboarding_data.point_b}\n"
+                                    f"Pedagogical Guideline: {pma_guidelines.guideline}\n"
+                                    f"Respond ONLY with the revised list of remaining steps."
+                                )
+
+                                try:
+                                    logger.info("Running JCA for plan revision...")
+                                    jca_revision_result = await jca_agent.run(
+                                        revision_prompt, message_history=history
+                                    )
+                                    # Update history immediately after JCA run
+                                    current_state["message_history"] = (
+                                        history + jca_revision_result.all_messages()
+                                    )
+
+                                    # Check if JCA returned a list of steps (adjust based on actual JCA output structure if needed)
+                                    new_revised_steps = None
+                                    if isinstance(
+                                        jca_revision_result.data, LearningPlan
+                                    ) and isinstance(
+                                        jca_revision_result.data.steps, list
+                                    ):
+                                        new_revised_steps = (
+                                            jca_revision_result.data.steps
+                                        )
+                                    elif isinstance(
+                                        jca_revision_result.data, list
+                                    ):  # If JCA just returns a list
+                                        new_revised_steps = jca_revision_result.data
+
+                                    if (
+                                        new_revised_steps is not None
+                                    ):  # Allow empty list if JCA decides no more steps needed
+                                        logger.info(
+                                            f"JCA successfully revised remaining steps: {new_revised_steps}"
+                                        )
+                                        plan_prefix = current_plan[: current_index + 1]
+                                        current_state["learning_plan"] = (
+                                            plan_prefix + new_revised_steps
+                                        )
+                                        plan_revised_message = "\n*(Note: I've adjusted the upcoming plan based on your feedback.)*"
+                                    else:
+                                        logger.warning(
+                                            f"JCA ran for revision but didn't return a valid list of steps. Type: {type(jca_revision_result.data)}. Keeping original plan."
+                                        )
+
+                                except Exception as jca_err:
+                                    logger.error(
+                                        f"Error running JCA for plan revision: {jca_err}",
+                                        exc_info=True,
+                                    )
+                                    # Keep original plan on error
+                            else:
+                                logger.warning(
+                                    "Could not attempt plan revision due to missing JCA agent or context."
+                                )
+                        # --- End of JCA Revision Logic --- #
+
+                        # Now, get the follow-up teaching message for the CURRENT step
                         teaching_message = await run_teaching_step(
                             teacher_agent=teacher_agent,
                             guidelines=guidelines,
@@ -640,7 +735,9 @@ async def handle_message(
                             answer_evaluation=answer_evaluation,
                         )
                         if teaching_message:
-                            reply_message = teaching_message
+                            reply_message = (
+                                teaching_message + plan_revised_message
+                            )  # Append revision note if plan was changed
                             current_state["last_teacher_message"] = teaching_message
                         else:
                             logger.error("Failed to get teaching follow-up message.")
