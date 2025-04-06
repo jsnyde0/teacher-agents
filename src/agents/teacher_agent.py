@@ -1,15 +1,33 @@
 # src/agents/teacher_agent.py
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
-# Import necessary input data models (though we might just pass strings)
-# from .onboarding_agent import OnboardingData
-# from .pedagogical_master_agent import PedagogicalGuidelines
-# from .journey_crafter_agent import LearningPlan, PlanStep # If passing structured plan
+from .journey_crafter_agent import LearningPlan
+
+# Import related data models
+from .onboarding_agent import OnboardingData
+from .pedagogical_master_agent import PedagogicalGuidelines
+
+
+# --- Data Model for Output ---
+class TeacherResponse(BaseModel):
+    """Teaching response from the Teacher Agent."""
+
+    content: str = Field(
+        ...,
+        description="The teaching content, explanations, examples, and questions for the student.",
+    )
+    current_step_index: int = Field(
+        ..., description="Index of the current learning plan step being taught."
+    )
+    completed: bool = Field(
+        False,
+        description="Whether this step is considered completed and should move to the next.",
+    )
+
 
 # --- Agent Definition ---
-
-
 def create_teacher_agent(model: OpenAIModel) -> Agent:
     """Creates the Teacher Agent instance.
 
@@ -28,74 +46,72 @@ def create_teacher_agent(model: OpenAIModel) -> Agent:
     # It needs to output conversational text (string).
     return Agent(
         model=model,
-        result_type=str,  # Outputs conversational text
+        result_type=TeacherResponse,
         system_prompt=(
-            "You are a friendly and encouraging Teacher Agent. Your goal is to guide a student through a single learning step, "
-            "following specific pedagogical guidelines.\n\n"
-            "**Your Task:**\n"
-            "You will receive the `Pedagogical Guideline` for how to teach, and the `Current Learning Step` description. "
-            "Your job is to generate the *initial* conversational text to present this step to the student. "
-            'Critically, after introducing the topic, you MUST immediately transition into the first piece of instruction, a relevant example, or a guiding question *about the topic itself* to encourage engagement. Do NOT simply ask "Are you ready?" or similar generic readiness questions. '
-            "Make sure your response directly addresses the learning step and follows the spirit of the guideline "
-            "(e.g., if the guideline suggests examples first, start with an example; if it suggests concepts first, start with an explanation). "
-            "Keep your tone supportive and engaging.\n\n"
-            "**Input Format (within user prompt):**\n"
-            "- Pedagogical Guideline: [Guideline text]\n"
-            "- Current Learning Step: [Step description text]\n\n"
+            "You are an expert Teacher Agent. Your task is to interact with the student, "
+            "executing the learning plan step-by-step while adhering to the pedagogical guidelines. "
+            "You will focus on the current step only, providing explanations, examples, and asking questions.\n\n"
+            "**Input Analysis:**\n"
+            "You'll receive:\n"
+            "1. The student's OnboardingData (Point A, Point B, Preferences)\n"
+            "2. The PedagogicalGuidelines for teaching approach\n"
+            "3. The LearningPlan with steps to follow\n"
+            "4. The current step index to focus on\n"
+            "5. The student's message/question\n"
+            "6. The conversation history\n\n"
+            "**Teaching Approach:**\n"
+            "1. **Focus on the current step only**. If the student asks about topics in future steps, gently redirect them.\n"
+            "2. **Follow the pedagogical guidelines** carefully in your teaching style.\n"
+            "3. **Provide clear explanations** with appropriate depth based on the student's knowledge level.\n"
+            "4. **Include relevant examples** that connect to the student's goal when possible.\n"
+            "5. **Ask checking questions** to verify understanding.\n"
+            "6. **Respond to student questions** related to the current topic in-depth.\n"
+            "7. **Determine when to advance** to the next step based on student demonstrations of understanding.\n\n"
             "**Output Format:**\n"
-            "Respond *only* with the conversational text string to present the step and begin the interaction."
+            "Respond with a TeacherResponse that includes:\n"
+            "1. `content`: Your teaching explanation, examples, and questions.\n"
+            "2. `current_step_index`: The step index you're currently teaching.\n"
+            "3. `completed`: Whether this step is complete and should advance to the next step.\n\n"
+            "**Important Rules:**\n"
+            "- Your teaching must be accurate, clear, and directly relevant to the current step.\n"
+            "- Don't introduce concepts that are too advanced for the student's current level.\n"
+            "- Use appropriate examples based on the student's background and preferences.\n"
+            "- Only mark a step as completed when the student has demonstrated sufficient understanding.\n"
+            "- If the student seems confused, provide additional explanations rather than advancing.\n"
+            "- If at the final step, set `completed` to true only when the overall learning goal appears achieved.\n"
         ),
     )
 
 
-# Example Usage (for basic check)
-if __name__ == "__main__":
-    import asyncio
-    import os
-
-    from dotenv import load_dotenv
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    load_dotenv()
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-    if not OPENROUTER_API_KEY:
-        print("Error: OPENROUTER_API_KEY not found in .env file.")
+# Function to prepare teacher agent input from session state
+def prepare_teacher_input(
+    onboarding_data: OnboardingData,
+    guidelines: PedagogicalGuidelines,
+    learning_plan: LearningPlan,
+    current_step_index: int,
+    user_message: str,
+) -> str:
+    """
+    Creates a formatted input prompt for the teacher agent based on the current session state.
+    """
+    # Get the current step content
+    if current_step_index >= len(learning_plan.steps):
+        current_step = "FINAL REVIEW: Review all previous steps and check for overall understanding."
     else:
-        # Configure OpenRouter
-        openrouter_model = OpenAIModel(
-            "google/gemini-2.0-flash-lite-001",
-            provider=OpenAIProvider(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=OPENROUTER_API_KEY,
-            ),
-        )
+        current_step = learning_plan.steps[current_step_index]
 
-        # Create agent
-        agent = create_teacher_agent(openrouter_model)
-
-        # Sample input data
-        sample_guideline = "Focus on practical examples first to illustrate the concept, then explain the theory."
-        sample_step = "Introduce Python dictionaries and how to create them."
-
-        # Construct prompt including the input data
-        input_prompt = (
-            f"Start teaching the student according to these instructions:\n\n"
-            f"Pedagogical Guideline: {sample_guideline}\n"
-            f"Current Learning Step: {sample_step}"
-        )
-
-        async def run_agent():
-            print("Running Teacher Agent...\n")
-            print(f"Input Prompt:\n{input_prompt}\n")  # Optional
-            result = await agent.run(input_prompt)
-            print("\n--- Agent Result ---")
-            if isinstance(result.data, str):
-                print(f"Agent Response:\n{result.data}")
-            else:
-                print(f"Unexpected result type: {type(result.data)}")
-                print(f"Data: {result.data}")
-            print(f"Usage: {result.usage()}")
-            print("------------------")
-
-        asyncio.run(run_agent())
+    # Create the combined input prompt
+    return (
+        f"Based on the following information, teach the student about the current step:\n\n"
+        f"**Student Profile:**\n"
+        f"- Current Knowledge (Point A): {onboarding_data.point_a}\n"
+        f"- Learning Goal (Point B): {onboarding_data.point_b}\n"
+        f"- Learning Preferences: {onboarding_data.preferences}\n\n"
+        f"**Pedagogical Guideline:** {guidelines.guideline}\n\n"
+        f"**Learning Plan:** {', '.join(learning_plan.steps)}\n\n"
+        f"**Current Step Index:** {current_step_index}\n"
+        f"**Current Step:** {current_step}\n\n"
+        f"**Student Message:** {user_message}\n\n"
+        f"Provide the next appropriate teaching content for this step. If the student demonstrates "
+        f"sufficient understanding of this step, indicate that it's completed."
+    )
