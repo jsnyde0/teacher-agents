@@ -2,7 +2,7 @@
 # --> Import logging <---
 import logging
 import os
-from typing import List, Union
+from typing import List
 
 import chainlit as cl
 
@@ -13,32 +13,21 @@ from dotenv import load_dotenv
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 
-# Import agent creation logic and model setup
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+# --> Import orchestration functions <---
+from src import orchestration
 
 # --> Import AnswerEvaluationResult model <---
 from src.agents.answer_evaluator_agent import (
     AnswerEvaluationResult,
-    create_answer_evaluator_agent,
 )
 
 # Import JCA components
-from src.agents.journey_crafter_agent import (
-    LearningPlan,
-    create_journey_crafter_agent,
-)
-from src.agents.onboarding_agent import OnboardingData, create_onboarding_agent
+from src.agents.onboarding_agent import OnboardingData
 
 # Import PMA components
 from src.agents.pedagogical_master_agent import (
     PedagogicalGuidelines,
-    create_pedagogical_master_agent,
 )
-from src.agents.step_evaluator_agent import create_step_evaluator_agent
-
-# Import Teacher and Step Evaluator agents
-from src.agents.teacher_agent import create_teacher_agent
 
 # Load environment variables (for OpenRouter API Key)
 load_dotenv()
@@ -54,50 +43,37 @@ logger = logging.getLogger(__name__)
 @cl.on_chat_start
 async def on_chat_start():
     """
-    Initializes agents and conversation history when a new chat session starts.
+    Initializes agents and conversation history using the orchestration module.
     """
+    logger.info("Chat start: Initializing session...")
     if not OPENROUTER_API_KEY:
+        logger.error("OPENROUTER_API_KEY not found.")
         await cl.Message(
             content="Error: OPENROUTER_API_KEY not found in environment variables."
         ).send()
         return
 
-    # Configure the common model provider
-    model = OpenAIModel(
-        MODEL_NAME,
-        provider=OpenAIProvider(
-            base_url=OPENROUTER_BASE_URL,
-            api_key=OPENROUTER_API_KEY,
-        ),
+    # --> Call orchestration.initialize_agents <---
+    agents = await orchestration.initialize_agents(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL,
+        model_name=MODEL_NAME,
     )
 
-    # Create the agent instances
-    onboarding_agent = create_onboarding_agent(model)
-    pedagogical_master_agent = create_pedagogical_master_agent(model)
-    journey_crafter_agent = create_journey_crafter_agent(model)  # Create JCA
-    teacher_agent = create_teacher_agent(model)
-    step_evaluator_agent = create_step_evaluator_agent(model)
-    # --> Initialize Answer Evaluation Agent <---
-    answer_evaluator_agent = create_answer_evaluator_agent(model)
-    # --> Log after creation <---
-    logger.info(f"Created answer_evaluator_agent instance: {answer_evaluator_agent}")
+    if not agents:
+        logger.error("Agent initialization failed.")
+        await cl.Message(content="Error: Failed to initialize agents.").send()
+        return
 
-    # Store agents and message history in the user session
-    cl.user_session.set("onboarding_agent", onboarding_agent)
-    cl.user_session.set("pedagogical_master_agent", pedagogical_master_agent)
-    cl.user_session.set("journey_crafter_agent", journey_crafter_agent)  # Store JCA
-    cl.user_session.set("teacher_agent", teacher_agent)
-    cl.user_session.set("step_evaluator_agent", step_evaluator_agent)
-    # --> Store Answer Evaluation Agent in session <---
-    cl.user_session.set("answer_evaluator_agent", answer_evaluator_agent)
-    # --> Log after setting in session <---
-    logger.info(
-        "Stored answer_evaluator_agent in session with key 'answer_evaluator_agent'"
-    )
+    # Store agents dictionary and initial state in the user session
+    # --> Store the whole agents dictionary <---
+    cl.user_session.set("agents", agents)
+    logger.info(f"Stored agent dictionary in session with keys: {list(agents.keys())}")
+
     cl.user_session.set("message_history", [])  # Initialize history
     cl.user_session.set("onboarding_data", None)  # To store OA result
     cl.user_session.set("pedagogical_guidelines", None)  # To store PMA result
-    cl.user_session.set("learning_plan", None)
+    cl.user_session.set("learning_plan", None)  # Stores List[str] of steps
     cl.user_session.set("current_step_index", -1)
     cl.user_session.set("current_stage", "onboarding")  # Track current flow stage
     cl.user_session.set("last_teacher_message", None)  # Add last_teacher_message state
@@ -106,69 +82,6 @@ async def on_chat_start():
         content="Hello! I'm here to help onboard you. To start, could you tell \
             me a bit about what you already know and what you'd like to learn?"
     ).send()
-
-
-async def run_pedagogical_master(
-    onboarding_data: OnboardingData,
-) -> Union[PedagogicalGuidelines, str]:
-    """Runs the Pedagogical Master Agent and returns guidelines or error."""
-    pma_agent: Agent = cl.user_session.get("pedagogical_master_agent")
-    history: List[ModelMessage] = cl.user_session.get("message_history")
-
-    input_prompt = (
-        f"Based on the following student onboarding information:\n"
-        f"- Current Knowledge (Point A): {onboarding_data.point_a}\n"
-        f"- Learning Goal (Point B): {onboarding_data.point_b}\n"
-        f"- Preferences: {onboarding_data.preferences}\n\n"
-        f"Generate concise pedagogical guidelines for teaching this student."
-    )
-
-    try:
-        result = await pma_agent.run(input_prompt, message_history=history)
-        history.extend(result.all_messages())
-        cl.user_session.set("message_history", history)
-        if isinstance(result.data, PedagogicalGuidelines):
-            return result.data
-        else:
-            logger.error(f"PMA returned unexpected data type: {type(result.data)}")
-            return "Error: Could not generate pedagogical guidelines."
-    except Exception as e:
-        logger.error(f"Error running PMA: {e}")
-        return f"An error occurred while generating pedagogical guidelines: {e}"
-
-
-async def run_journey_crafter(
-    onboarding_data: OnboardingData,
-    guidelines: PedagogicalGuidelines,
-) -> Union[LearningPlan, str]:
-    """Runs the Journey Crafter Agent and returns a learning plan or error."""
-    jca_agent: Agent = cl.user_session.get("journey_crafter_agent")
-    history: List[ModelMessage] = cl.user_session.get("message_history")
-
-    # Use the actual guideline string from the object
-    guideline_str = guidelines.guideline
-
-    input_prompt = (
-        f"Based on the student profile and pedagogical guidelines:\n"
-        f"- Point A: {onboarding_data.point_a}\n"
-        f"- Point B: {onboarding_data.point_b}\n"
-        f"- Preferences: {onboarding_data.preferences}\n"
-        f"- Pedagogical Guideline: {guideline_str}\n\n"
-        f"Create a concise, step-by-step learning plan (as a list of strings, max 5 steps) to get the student from Point A to Point B."
-    )
-
-    try:
-        result = await jca_agent.run(input_prompt, message_history=history)
-        history.extend(result.all_messages())
-        cl.user_session.set("message_history", history)
-        if isinstance(result.data, LearningPlan):
-            return result.data
-        else:
-            logger.error(f"JCA returned unexpected data type: {type(result.data)}")
-            return "Error: Could not generate learning plan."
-    except Exception as e:
-        logger.error(f"Error running JCA: {e}")
-        return f"An error occurred while generating the learning plan: {e}"
 
 
 # --> Add Helper Function for Teacher Agent <---
@@ -194,26 +107,28 @@ async def run_teacher_for_current_step(
         The teaching message string generated by the Teacher Agent, or an error message string
         if generation fails or necessary data is missing.
     """
-    teacher_agent: Agent = cl.user_session.get("teacher_agent")
-    learning_plan: List[str] = cl.user_session.get("learning_plan")
+    # --> Retrieve agents dictionary <---
+    agents = cl.user_session.get("agents")
+    teacher_agent: Agent = agents.get("teacher_agent")
+    learning_plan_steps: List[str] = cl.user_session.get("learning_plan")
     current_step_index: int = cl.user_session.get("current_step_index")
     guidelines_obj: PedagogicalGuidelines = cl.user_session.get(
         "pedagogical_guidelines"
     )
 
     if (
-        not all([teacher_agent, learning_plan, guidelines_obj])
+        not all([teacher_agent, learning_plan_steps, guidelines_obj])
         or current_step_index < 0
     ):
         logger.error("Teacher Agent called with missing session data.")
         return "Error: Could not retrieve necessary data to proceed with teaching."
 
-    if current_step_index >= len(learning_plan):
+    if current_step_index >= len(learning_plan_steps):
         logger.error("Teacher Agent called with invalid step index.")
         return "Error: Invalid step index."
 
     # Get the current step description and guideline string
-    current_step_description = learning_plan[current_step_index]
+    current_step_description = learning_plan_steps[current_step_index]
     guideline_str = guidelines_obj.guideline
 
     # --- Construct prompt conditionally ---
@@ -267,7 +182,7 @@ async def run_teacher_for_current_step(
             )
             return "Error: Could not generate teaching content for this step."
     except Exception as e:
-        logger.error(f"Error running Teacher Agent: {e}")
+        logger.error(f"Error running Teacher Agent: {e}", exc_info=True)
         return f"An error occurred while preparing the teaching content: {e}"
 
 
@@ -277,18 +192,27 @@ async def on_message(message: cl.Message):
     Handles incoming user messages, runs the appropriate agent based on state,
     and displays responses.
     """
+    # --> Retrieve agents dictionary <---
+    agents = cl.user_session.get("agents", {})
+    if not agents:
+        logger.error("Agents dictionary not found in session. Aborting.")
+        await cl.Message(
+            content="Critical Error: Session agents missing. Please restart."
+        ).send()
+        return
+
     # --> Log session keys at start of message handling <---
-    # logger.info(f"on_message START - Session keys: {list(cl.user_session.keys())}\") # Incorrect: UserSession has no .keys()
-    # --> Log existence of key session items instead <---
     logger.info(
         f"on_message START - Checking session: "
         f" stage='{cl.user_session.get('current_stage')}', "
-        f" has_oa={cl.user_session.get('onboarding_agent') is not None}, "
-        f" has_pma={cl.user_session.get('pedagogical_master_agent') is not None}, "
-        f" has_jca={cl.user_session.get('journey_crafter_agent') is not None}, "
-        f" has_teacher={cl.user_session.get('teacher_agent') is not None}, "
-        f" has_stepeval={cl.user_session.get('step_evaluator_agent') is not None}, "
-        f" has_anseval={cl.user_session.get('answer_evaluator_agent') is not None}"
+        f" has_agents={bool(agents)}, "  # Check if agents dict exists
+        # Check specific agents within the dict
+        f" has_oa={agents.get('onboarding_agent') is not None}, "
+        f" has_pma={agents.get('pedagogical_master_agent') is not None}, "
+        f" has_jca={agents.get('journey_crafter_agent') is not None}, "
+        f" has_teacher={agents.get('teacher_agent') is not None}, "
+        f" has_stepeval={agents.get('step_evaluator_agent') is not None}, "
+        f" has_anseval={agents.get('answer_evaluator_agent') is not None}"
     )
 
     current_stage = cl.user_session.get("current_stage", "onboarding")
@@ -308,253 +232,219 @@ async def on_message(message: cl.Message):
 
     if current_stage == "onboarding":
         logger.info("Processing message in onboarding stage...")
-        # --> Retrieve onboarding_agent from session <---
-        onboarding_agent: Agent = cl.user_session.get("onboarding_agent")
+        # --> Retrieve onboarding_agent from agents dictionary <---
+        onboarding_agent: Agent = agents.get("onboarding_agent")
         if not onboarding_agent:
-            logger.error("Onboarding Agent not found in session.")
+            logger.error("Onboarding Agent not found in session agents dict.")
             await cl.Message(
                 content="Error: Cannot process onboarding. Please restart chat."
             ).send()
-            cl.user_session.set("current_stage", "complete")
+            # cl.user_session.set("current_stage", "complete") # Let error handling below manage stage
             return
 
         await cl.Message(content="Processing your information...").send()  # Feedback
 
-        # --> Add try/except around agent run <---
-        try:
-            result = await onboarding_agent.run(
-                message.content, message_history=message_history
+        # --> Call orchestration.run_onboarding_step <---
+        oa_result, updated_history = await orchestration.run_onboarding_step(
+            onboarding_agent=onboarding_agent,
+            user_message=message.content,
+            message_history=message_history,
+        )
+        # Update history in session immediately
+        cl.user_session.set("message_history", updated_history)
+
+        if isinstance(oa_result, OnboardingData):
+            # --- Onboarding Complete: Run Post-Onboarding Pipeline --- #
+            logger.info("Onboarding complete. Running post-onboarding pipeline...")
+            cl.user_session.set("onboarding_data", oa_result)  # Store onboarding data
+
+            # Retrieve agents needed for pipeline
+            pma_agent: Agent = agents.get("pedagogical_master_agent")
+            jca_agent: Agent = agents.get("journey_crafter_agent")
+
+            if not pma_agent or not jca_agent:
+                logger.error("PMA or JCA agent missing for post-onboarding pipeline.")
+                await cl.Message(content="Error: Planning agents not available.").send()
+                cl.user_session.set("current_stage", "complete")  # Halt
+                return
+
+            await cl.Message(
+                content=(
+                    "Thanks! I have your onboarding details. Now generating personalized pedagogical guidelines and learning plan..."
+                )
+            ).send()
+
+            # --> Call orchestration.run_post_onboarding_pipeline <---
+            (
+                guidelines,
+                plan_steps,
+                final_history,
+                pipeline_error,
+            ) = await orchestration.run_post_onboarding_pipeline(
+                pma_agent=pma_agent,
+                jca_agent=jca_agent,
+                onboarding_data=oa_result,
+                message_history=updated_history,  # Use history from onboarding step
             )
-            # Use the message_history list fetched at the start
-            message_history.extend(result.all_messages())
+            # Update history again after pipeline run
+            cl.user_session.set("message_history", final_history)
 
-            # --> Log the type of result.data <---
-            logger.info(f"Onboarding agent returned type: {type(result.data)}")
+            if pipeline_error:
+                # Handle error from PMA or JCA
+                logger.error(f"Post-onboarding pipeline failed: {pipeline_error}")
+                await cl.Message(
+                    content=f"Sorry, I couldn't complete the planning: {pipeline_error}"
+                ).send()
+                cl.user_session.set("current_stage", "complete")  # End flow on error
+            elif guidelines and plan_steps:
+                # Pipeline successful
+                logger.info(
+                    "Post-onboarding pipeline successful. Moving to teaching stage."
+                )
+                cl.user_session.set("pedagogical_guidelines", guidelines)
+                cl.user_session.set("learning_plan", plan_steps)  # Store steps list
+                cl.user_session.set("current_step_index", 0)
+                cl.user_session.set("current_stage", "teaching")
 
-            if isinstance(result.data, OnboardingData):
-                logger.info("Onboarding complete. Moving to pedagogy stage.")
-                onboarding_data = result.data
-                cl.user_session.set("onboarding_data", onboarding_data)
-                cl.user_session.set("current_stage", "pedagogy")
                 await cl.Message(
                     content=(
-                        "Thanks! I have your onboarding details. Now generating personalized pedagogical guidelines..."
+                        f"**Guideline:** {guidelines.guideline}\\n\\n"
+                        f"**Learning Plan:**\\n"
+                        + "\\n".join([f"- {s}" for s in plan_steps])
+                        + "\\n\\nLet's start with the first step!"
                     )
                 ).send()
-                # --- Trigger PMA ---
-                guidelines_result = await run_pedagogical_master(onboarding_data)
-                if isinstance(guidelines_result, PedagogicalGuidelines):
-                    logger.info("PMA successful. Moving to journey crafting stage.")
-                    cl.user_session.set("pedagogical_guidelines", guidelines_result)
-                    cl.user_session.set("current_stage", "journey_crafting")
-                    await cl.Message(
-                        content=(
-                            "Guidelines created! Now crafting your learning plan..."
-                        )
-                    ).send()
-                    # --- Trigger JCA ---
-                    plan_result = await run_journey_crafter(
-                        onboarding_data, guidelines_result
-                    )
-                    if isinstance(plan_result, LearningPlan):
-                        logger.info("JCA successful. Moving to teaching stage.")
-                        cl.user_session.set("learning_plan", plan_result.steps)
-                        cl.user_session.set("current_step_index", 0)
-                        cl.user_session.set("current_stage", "teaching")
-                        await cl.Message(
-                            content=(
-                                "Here is your learning plan:\\n"
-                                + "\\n".join([f"- {s}" for s in plan_result.steps])
-                                + "\\n\\nLet's start with the first step!"
-                            )
-                        ).send()
-                        # --- Trigger Teacher for Step 0 ---
-                        teaching_message = await run_teacher_for_current_step()
-                        # --> Store the teacher message <---
-                        cl.user_session.set("last_teacher_message", teaching_message)
-                        await cl.Message(content=teaching_message).send()
-                    else:  # JCA Error
-                        logger.error(f"JCA failed: {plan_result}")
-                        await cl.Message(
-                            content=f"Sorry, I couldn't create your learning plan: {plan_result}"
-                        ).send()
-                        cl.user_session.set(
-                            "current_stage", "complete"
-                        )  # End flow on error
-                else:  # PMA Error
-                    logger.error(f"PMA failed: {guidelines_result}")
-                    await cl.Message(
-                        content=f"Sorry, I couldn't generate pedagogical guidelines: {guidelines_result}"
-                    ).send()
-                    cl.user_session.set(
-                        "current_stage", "complete"
-                    )  # End flow on error
-            elif isinstance(result.data, str):
-                # Onboarding agent asking for more info
-                logger.info("Onboarding agent needs more info.")
-                await cl.Message(content=result.data).send()
-            else:
-                # Handle unexpected onboarding result type
-                logger.error(
-                    f"Onboarding returned unexpected data type: {type(result.data)}"
-                )
-                await cl.Message(
-                    content="Sorry, something went wrong during onboarding."
-                ).send()
-                cl.user_session.set("current_stage", "complete")  # End flow
 
-        except Exception as e:
-            logger.error(
-                f"Error running Onboarding Agent: {e}", exc_info=True
-            )  # Add traceback
+                # --- Trigger Teacher for Step 0 ---
+                # (Uses existing helper for now)
+                teaching_message = await run_teacher_for_current_step()
+                cl.user_session.set("last_teacher_message", teaching_message)
+                await cl.Message(content=teaching_message).send()
+            else:
+                # Should not happen if pipeline_error is None, but safety check
+                logger.error("Post-onboarding pipeline returned unexpected state.")
+                await cl.Message(
+                    content="Sorry, an unexpected error occurred during planning."
+                ).send()
+                cl.user_session.set("current_stage", "complete")
+
+        elif isinstance(oa_result, str):
+            # Onboarding agent asking for more info
+            logger.info("Onboarding agent needs more info.")
+            await cl.Message(content=oa_result).send()
+        else:
+            # Handle onboarding error (oa_result is None)
+            logger.error("Onboarding step failed.")
             await cl.Message(
-                content=f"An error occurred during onboarding processing: {e}"
+                content="Sorry, something went wrong during onboarding."
             ).send()
-            cl.user_session.set("current_stage", "complete")
+            cl.user_session.set("current_stage", "complete")  # End flow
 
     # --- Teaching Stage Logic ---
     elif current_stage == "teaching":
         logger.info(
             f"Processing message in teaching stage (step {cl.user_session.get('current_step_index')})..."
         )
-        # --> Retrieve Step Evaluator Agent from session <---
-        step_evaluator_agent: Agent = cl.user_session.get("step_evaluator_agent")
+        # --> Retrieve Step Evaluator Agent from agents dictionary <---
+        step_evaluator_agent: Agent = agents.get("step_evaluator_agent")
         # --> Retrieve last teacher message from session <---
         last_teacher_message: str | None = cl.user_session.get("last_teacher_message")
 
         # Use Step Evaluator to decide next action
         if not step_evaluator_agent:
-            logger.error("Step Evaluator Agent not found in session.")
+            logger.error("Step Evaluator Agent not found in session agents dict.")
             await cl.Message(
                 content="Error: Cannot evaluate progress. Please restart the chat."
             ).send()
-            cl.user_session.set("current_stage", "complete")
+            # cl.user_session.set("current_stage", "complete") # Let error handling manage stage
             return
 
-        # --> Format prompt for evaluator with context <---
-        evaluator_input_prompt = (
-            f"Teacher's Last Message: {last_teacher_message or '(No previous teacher message)'}\\n"
-            f"Student's Response: {message.content}"
+        # --> Call orchestration.run_step_evaluation <---
+        evaluation = await orchestration.run_step_evaluation(
+            step_evaluator_agent=step_evaluator_agent,
+            last_teacher_message=last_teacher_message,
+            user_message=message.content,
         )
 
-        try:
-            # --> Run evaluator with the combined prompt <---
-            eval_result = await step_evaluator_agent.run(evaluator_input_prompt)
-            evaluation = eval_result.data
-            logger.info(
-                f"Step Evaluator context: [Teacher: '{last_teacher_message}', Student: '{message.content}'] -> Result: {evaluation}"
-            )  # Improved logging
-
-            if evaluation == "PROCEED":
-                current_index = cl.user_session.get("current_step_index")
-                learning_plan = cl.user_session.get("learning_plan")
-                next_index = current_index + 1
-                cl.user_session.set("current_step_index", next_index)
-
-                if next_index < len(learning_plan):
-                    logger.info(f"Proceeding to step {next_index}")
-                    await cl.Message(
-                        content="Great! Let's move to the next step."
-                    ).send()
-                    teaching_message = await run_teacher_for_current_step()
-                    # --> Store the teacher message <---
-                    cl.user_session.set("last_teacher_message", teaching_message)
-                    await cl.Message(content=teaching_message).send()
-                else:
-                    logger.info("Learning plan complete.")
-                    await cl.Message(
-                        content="Congratulations! You've completed the learning plan."
-                    ).send()
-                    cl.user_session.set("current_stage", "complete")
-
-            elif evaluation == "STAY" or evaluation == "UNCLEAR":
-                log_level = "STAY" if evaluation == "STAY" else "UNCLEAR"
-                logger.info(
-                    f"Step Evaluator indicates {log_level}. Running Answer Evaluator."
-                )
-
-                # --> Call Answer Evaluation Agent <---
-                answer_evaluator_agent: Agent = cl.user_session.get(
-                    "answer_evaluator_agent"
-                )
-                learning_plan: List[str] = cl.user_session.get("learning_plan")
-                current_step_index: int = cl.user_session.get("current_step_index")
-                current_step_description = learning_plan[current_step_index]
-
-                # --> Add logging to check retrieved values <---
-                logger.info(
-                    f"Retrieved answer_evaluator_agent: {answer_evaluator_agent}"
-                )
-                logger.info(
-                    f"Retrieved current_step_description: {current_step_description}"
-                )
-
-                if not answer_evaluator_agent or current_step_description is None:
-                    logger.error(
-                        "Missing Answer Evaluator or step description for evaluation."
-                    )
-                    await cl.Message(
-                        content="Error: Cannot evaluate answer context."
-                    ).send()
-                    return
-
-                answer_eval_prompt = (
-                    f"Current Learning Step Goal: {current_step_description}\\n"
-                    f"Teacher's Last Instruction/Question: {last_teacher_message or '(None)'}\\n"
-                    f"Student's Response: {message.content}"
-                )
-
-                try:
-                    answer_eval_result_obj = await answer_evaluator_agent.run(
-                        answer_eval_prompt
-                    )
-
-                    if isinstance(answer_eval_result_obj.data, AnswerEvaluationResult):
-                        answer_evaluation = answer_eval_result_obj.data
-                        logger.info(
-                            f"Answer Evaluation Result: {answer_evaluation.evaluation} - {answer_evaluation.explanation}"
-                        )
-
-                        # --> Call Teacher with evaluation result <---
-                        teaching_message = await run_teacher_for_current_step(
-                            is_follow_up=True,
-                            last_user_message=message.content,
-                            answer_evaluation=answer_evaluation,
-                        )
-                        cl.user_session.set("last_teacher_message", teaching_message)
-                        await cl.Message(content=teaching_message).send()
-                    else:
-                        logger.error(
-                            f"Answer Evaluator returned unexpected type: {type(answer_eval_result_obj.data)}"
-                        )
-                        await cl.Message(
-                            content="Error: Could not parse answer evaluation."
-                        ).send()
-                        # Fallback? Maybe just call teacher without evaluation?
-                        # For now, just stop to avoid confusing user further.
-                        return
-
-                except Exception as e:
-                    logger.error(
-                        f"Error running Answer Evaluator Agent: {e}", exc_info=True
-                    )
-                    await cl.Message(
-                        content=f"An error occurred during answer evaluation: {e}"
-                    ).send()
-                    return
-
-            else:
-                logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
-                await cl.Message(
-                    content="Sorry, I had trouble understanding your response regarding progression."
-                ).send()
-
-        except Exception as e:
-            logger.error(f"Error running Step Evaluator Agent: {e}")
+        # Check if evaluation failed (returned None)
+        if evaluation is None:
+            logger.error("Step Evaluation failed.")
             await cl.Message(
-                content=f"An error occurred while evaluating your progress: {e}"
+                content="Sorry, I had trouble evaluating your progress."
             ).send()
-            # Optionally decide whether to halt or retry
+            return  # Stop processing this message if evaluation failed
+
+        if evaluation == "PROCEED":
+            current_index = cl.user_session.get("current_step_index")
+            learning_plan_steps = cl.user_session.get("learning_plan")  # Get steps list
+            next_index = current_index + 1
+            cl.user_session.set("current_step_index", next_index)
+
+            if next_index < len(learning_plan_steps):
+                logger.info(f"Proceeding to step {next_index}")
+                await cl.Message(content="Great! Let's move to the next step.").send()
+                # Uses existing helper for now
+                teaching_message = await run_teacher_for_current_step()
+                # --> Store the teacher message <---
+                cl.user_session.set("last_teacher_message", teaching_message)
+                await cl.Message(content=teaching_message).send()
+            else:
+                logger.info("Learning plan complete.")
+                await cl.Message(
+                    content="Congratulations! You've completed the learning plan."
+                ).send()
+                cl.user_session.set("current_stage", "complete")
+
+        elif evaluation == "STAY" or evaluation == "UNCLEAR":
+            log_level = "STAY" if evaluation == "STAY" else "UNCLEAR"
+            logger.info(
+                f"Step Evaluator indicates {log_level}. Running Answer Evaluator."
+            )
+
+            # --> Call Answer Evaluation Agent via orchestration <---
+            answer_evaluator_agent: Agent = agents.get("answer_evaluator_agent")
+            learning_plan_steps: List[str] = cl.user_session.get("learning_plan")
+            current_step_index: int = cl.user_session.get("current_step_index")
+
+            if not answer_evaluator_agent:
+                logger.error("Answer Evaluator agent not found in session agents dict.")
+                await cl.Message(
+                    content="Error: Cannot evaluate answer context."
+                ).send()
+                return
+
+            # --> Call orchestration.run_answer_evaluation <---
+            answer_evaluation = await orchestration.run_answer_evaluation(
+                answer_evaluator_agent=answer_evaluator_agent,
+                learning_plan_steps=learning_plan_steps,
+                current_step_index=current_step_index,
+                last_teacher_message=last_teacher_message,
+                user_message=message.content,
+            )
+
+            # Check if evaluation failed (returned None)
+            if answer_evaluation is None:
+                logger.error("Answer Evaluation failed.")
+                await cl.Message(
+                    content="Sorry, I had trouble evaluating your answer."
+                ).send()
+                return  # Stop processing this message
+
+            # --> Call Teacher with evaluation result <---
+            teaching_message = await run_teacher_for_current_step(
+                is_follow_up=True,
+                last_user_message=message.content,
+                answer_evaluation=answer_evaluation,
+            )
+            cl.user_session.set("last_teacher_message", teaching_message)
+            await cl.Message(content=teaching_message).send()
+
+        else:
+            # This case should be less likely now as run_step_evaluation returns None on error/unexpected
+            logger.error(f"Step Evaluator returned unexpected value: {evaluation}")
+            await cl.Message(
+                content="Sorry, I had trouble understanding your response regarding progression."
+            ).send()
 
     elif current_stage == "complete":
         logger.info("Processing message in complete stage.")
@@ -568,5 +458,8 @@ async def on_message(message: cl.Message):
             content="Sorry, I've encountered an unexpected state. Please restart the chat."
         ).send()
 
-    # Update history at the end of the turn
-    cl.user_session.set("message_history", message_history)
+    # Update history at the end of the turn - this was missed before!
+    # message_history should be updated within the try block for onboarding agent
+    # For teaching, history is not directly used by evaluators/teacher in this pattern,
+    # but could be logged or passed if needed in the future.
+    # cl.user_session.set("message_history", message_history) # Ensure history is saved if modified

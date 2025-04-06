@@ -38,7 +38,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # Updated model selection with larger context window
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-MODEL_NAME = "anthropic/claude-3-opus-20240229"  # 200K token window
+MODEL_NAME = "google/gemini-2.0-flash-lite-001"  # 200K token window
 
 print(f"Environment loaded - API Key present: {bool(OPENROUTER_API_KEY)}")
 print(f"Using model: {MODEL_NAME}")
